@@ -1,9 +1,7 @@
 // =============================================================================
-// Tab Bar Component
+// Tab Bar Component (Horizontal)
 // =============================================================================
 
-import React from 'react';
-import { Box, Text } from 'ink';
 import { Tab, ALL_TABS } from '../types/types.js';
 
 interface TabBarProps {
@@ -21,25 +19,31 @@ const TAB_ICONS: Record<Tab, string> = {
   [Tab.Logs]: '📝',
 };
 
-export function TabBar({ activeTab, onTabChange }: TabBarProps): React.ReactElement {
+export function TabBar({ activeTab, onTabChange }: TabBarProps) {
   return (
-    <Box borderStyle="single" borderColor="gray" paddingX={1}>
+    <box border borderStyle="single" borderColor="#888888" paddingLeft={1} paddingRight={1}>
       {ALL_TABS.map((tab, index) => {
         const isActive = tab === activeTab;
         
         return (
-          <Box key={tab} marginRight={2}>
-            <Text
-              bold={isActive}
-              color={isActive ? 'cyan' : 'gray'}
-              backgroundColor={isActive ? 'gray' : undefined}
-            >
-              {' '}{TAB_ICONS[tab]} {tab}{' '}
-            </Text>
-            <Text dimColor> [{index + 1}]</Text>
-          </Box>
+          <box key={tab} marginRight={2}>
+            <text>
+              {isActive ? (
+                <strong>
+                  <span fg="#00ffff" bg="#444444">
+                    {' '}{TAB_ICONS[tab]} {tab}{' '}
+                  </span>
+                </strong>
+              ) : (
+                <span fg="#888888">
+                  {' '}{TAB_ICONS[tab]} {tab}{' '}
+                </span>
+              )}
+            </text>
+            <text><span fg="#888888"> [{index + 1}]</span></text>
+          </box>
         );
       })}
-    </Box>
+    </box>
   );
 }

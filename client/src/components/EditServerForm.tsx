@@ -2,13 +2,13 @@
 // Edit Server Form Component
 // =============================================================================
 
-import React, { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
-import TextInput from 'ink-text-input';
+import { useState } from 'react';
+import { useKeyboard } from '@opentui/react';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Server } from '../types/types.js';
 import { updateServer } from '../db/database.js';
+import { logger } from '../utils/logger.js';
 
 interface EditServerFormProps {
   server: Server;
@@ -40,7 +40,7 @@ const FIELDS: FormField[] = [
   { key: 'agentPort', label: 'Agent Port', required: false },
 ];
 
-export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormProps): React.ReactElement {
+export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormProps) {
   const [values, setValues] = useState<Record<string, string>>({
     name: server.name,
     host: server.host,
@@ -52,30 +52,31 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
   const [currentField, setCurrentField] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  useInput((input, key) => {
-    if (key.escape) {
+  useKeyboard((key) => {
+    if (key.name === 'escape') {
+      logger.info('User cancelled edit server form', { id: server.id });
       onCancel();
       return;
     }
 
-    if (key.upArrow) {
+    if (key.name === 'up') {
       setCurrentField((i: number) => Math.max(0, i - 1));
       setError(null);
     }
 
-    if (key.downArrow) {
+    if (key.name === 'down') {
       setCurrentField((i: number) => Math.min(FIELDS.length - 1, i + 1));
       setError(null);
     }
 
-    if (key.return && currentField === FIELDS.length - 1) {
+    if (key.name === 'enter' && currentField === FIELDS.length - 1) {
       handleSubmit();
-    } else if (key.return) {
+    } else if (key.name === 'enter') {
       setCurrentField((i: number) => Math.min(FIELDS.length - 1, i + 1));
     }
 
     // Ctrl+S to submit
-    if (key.ctrl && input === 's') {
+    if (key.ctrl && key.name === 's') {
       handleSubmit();
     }
   });
@@ -84,6 +85,7 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
     // Validate required fields
     for (const field of FIELDS) {
       if (field.required && !values[field.key]?.trim()) {
+        logger.warn('EditServerForm validation failed', { id: server.id, field: field.key, value: values[field.key] });
         setError(`${field.label} is required`);
         return;
       }
@@ -96,6 +98,7 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
     }
 
     try {
+      logger.info('Updating server', { id: server.id, updates: values });
       updateServer(server.id, {
         name: values.name!.trim(),
         host: values.host!.trim(),
@@ -106,66 +109,78 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
       });
       onSubmit();
     } catch (err) {
+      logger.error('Failed to update server', { id: server.id, error: err });
       setError(err instanceof Error ? err.message : 'Failed to update server');
     }
   };
 
-  const handleChange = (fieldKey: string, value: string) => {
-    setValues((prev: Record<string, string>) => ({ ...prev, [fieldKey]: value }));
-    setError(null);
+  const handleChange = (newValue: string) => {
+    const fieldKey = FIELDS[currentField]?.key;
+    if (fieldKey) {
+      setValues((prev: Record<string, string>) => ({ ...prev, [fieldKey]: newValue }));
+      setError(null);
+    }
   };
 
   return (
-    <Box flexDirection="column" padding={1}>
-      <Box marginBottom={1}>
-        <Text bold color="cyan">Edit Server: </Text>
-        <Text>{server.name}</Text>
-      </Box>
+    <box flexDirection="column" padding={1}>
+      <box marginBottom={1}>
+        <text><strong><span fg="#00ffff">Edit Server: </span></strong></text>
+        <text>{server.name}</text>
+      </box>
       
-      <Box flexDirection="column">
+      <box flexDirection="column">
         {FIELDS.map((field, index) => {
           const isActive = index === currentField;
           const value = values[field.key] ?? '';
           
           return (
-            <Box key={field.key} marginBottom={index === FIELDS.length - 1 ? 0 : 1}>
-              <Box width={16}>
-                <Text color={isActive ? 'cyan' : 'gray'}>
-                  {isActive ? '❯ ' : '  '}
-                  {field.label}:
-                </Text>
-              </Box>
-              <Box>
+            <box key={field.key} marginBottom={index === FIELDS.length - 1 ? 0 : 1}>
+              <box width={16}>
+                <text>
+                  <span fg={isActive ? '#00ffff' : '#888888'}>
+                    {isActive ? '❯ ' : '  '}
+                    {field.label}:
+                  </span>
+                </text>
+              </box>
+              <box>
                 {isActive ? (
-                  <TextInput
+                  <input
                     value={value}
-                    onChange={(v: string) => handleChange(field.key, v)}
+                    onChange={(v: string) => handleChange(v)}
+                    focused
+                    width={30}
                   />
                 ) : (
-                  <Text color={value ? 'white' : 'gray'}>
-                    {value || '(empty)'}
-                  </Text>
+                  <text>
+                    <span fg={value ? '#ffffff' : '#888888'}>
+                      {value || '(empty)'}
+                    </span>
+                  </text>
                 )}
-              </Box>
+              </box>
               {!field.required && isActive && (
-                <Text dimColor> (optional)</Text>
+                <text><span fg="#888888"> (optional)</span></text>
               )}
-            </Box>
+            </box>
           );
         })}
-      </Box>
+      </box>
 
       {error && (
-        <Box marginTop={1}>
-          <Text color="red">✗ {error}</Text>
-        </Box>
+        <box marginTop={1}>
+          <text><span fg="#ff0000">✗ {error}</span></text>
+        </box>
       )}
 
-      <Box marginTop={1}>
-        <Text dimColor>
-          ↑↓ Navigate fields • Enter: Next/Submit • Esc: Cancel
-        </Text>
-      </Box>
-    </Box>
+      <box marginTop={1}>
+        <text>
+          <span fg="#888888">
+            ↑↓ Navigate fields • Enter: Next/Submit • Esc: Cancel
+          </span>
+        </text>
+      </box>
+    </box>
   );
 }

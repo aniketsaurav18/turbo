@@ -2,12 +2,11 @@
 // Commands Tab Component
 // =============================================================================
 
-import React, { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
-import TextInput from 'ink-text-input';
-import Spinner from 'ink-spinner';
+import { useState } from 'react';
+import { useKeyboard } from '@opentui/react';
 import type { Server, CommandResult } from '../../types/types.js';
 import { executeCommand } from '../../utils/ssh.js';
+import { Spinner } from '../Spinner.js';
 
 interface CommandsTabProps {
   server: Server;
@@ -19,22 +18,22 @@ interface CommandEntry {
   timestamp: Date;
 }
 
-export function CommandsTab({ server }: CommandsTabProps): React.ReactElement {
+export function CommandsTab({ server }: CommandsTabProps) {
   const [command, setCommand] = useState('');
   const [history, setHistory] = useState<CommandEntry[]>([]);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  useInput((input, key) => {
+  useKeyboard((key) => {
     // Navigate command history
-    if (key.upArrow && commandHistory.length > 0 && !isExecuting) {
+    if (key.name === 'up' && commandHistory.length > 0 && !isExecuting) {
       const newIndex = Math.min(historyIndex + 1, commandHistory.length - 1);
       setHistoryIndex(newIndex);
       setCommand(commandHistory[commandHistory.length - 1 - newIndex] ?? '');
     }
     
-    if (key.downArrow && !isExecuting) {
+    if (key.name === 'down' && !isExecuting) {
       const newIndex = Math.max(historyIndex - 1, -1);
       setHistoryIndex(newIndex);
       if (newIndex === -1) {
@@ -45,7 +44,7 @@ export function CommandsTab({ server }: CommandsTabProps): React.ReactElement {
     }
 
     // Clear history
-    if (key.ctrl && input === 'l') {
+    if (key.ctrl && key.name === 'l') {
       setHistory([]);
     }
   });
@@ -83,55 +82,57 @@ export function CommandsTab({ server }: CommandsTabProps): React.ReactElement {
   };
 
   return (
-    <Box flexDirection="column" height="100%">
-      <Box marginBottom={1}><Text bold color="cyan">Run Commands</Text></Box>
+    <box flexDirection="column" height="100%">
+      <box marginBottom={1}><text><strong><span fg="#00ffff">Run Commands</span></strong></text></box>
       
       {/* Output History */}
-      <Box flexDirection="column" flexGrow={1}>
+      <box flexDirection="column" flexGrow={1}>
         {history.length === 0 && (
-          <Text dimColor>Enter a command below to execute it on the server.</Text>
+          <text><span fg="#888888">Enter a command below to execute it on the server.</span></text>
         )}
         
         {history.map((entry, i) => (
-          <Box key={i} flexDirection="column" marginBottom={1}>
-            <Box>
-              <Text color="gray">$ </Text>
-              <Text bold>{entry.command}</Text>
-              <Text dimColor> ({entry.result.duration}ms, exit: {entry.result.exitCode})</Text>
-            </Box>
+          <box key={i} flexDirection="column" marginBottom={1}>
+            <box>
+              <text><span fg="#888888">$ </span></text>
+              <text><strong>{entry.command}</strong></text>
+              <text><span fg="#888888"> ({entry.result.duration}ms, exit: {entry.result.exitCode})</span></text>
+            </box>
             {entry.result.stdout && (
-              <Text>{entry.result.stdout.slice(0, 500)}</Text>
+              <text>{entry.result.stdout.slice(0, 500)}</text>
             )}
             {entry.result.stderr && (
-              <Text color="red">{entry.result.stderr.slice(0, 200)}</Text>
+              <text><span fg="#ff0000">{entry.result.stderr.slice(0, 200)}</span></text>
             )}
-          </Box>
+          </box>
         ))}
-      </Box>
+      </box>
 
       {/* Command Input */}
-      <Box flexDirection="column" borderStyle="single" borderColor="gray" padding={1}>
-        <Box>
-          <Text color="cyan">Command: </Text>
+      <box flexDirection="column" border borderStyle="single" borderColor="#888888" padding={1}>
+        <box>
+          <text><span fg="#00ffff">Command: </span></text>
           {isExecuting ? (
-            <Text>
-              <Text color="yellow"><Spinner type="dots" /></Text>
-              {' '}Executing...
-            </Text>
+            <box>
+              <Spinner color="#ffff00" />
+              <text> Executing...</text>
+            </box>
           ) : (
-            <TextInput
+            <input
               value={command}
-              onChange={setCommand}
+              onChange={(v) => setCommand(v)}
               onSubmit={handleSubmit}
               placeholder="ls -la, cat /etc/os-release, ..."
+              focused
+              width={40}
             />
           )}
-        </Box>
-      </Box>
+        </box>
+      </box>
 
-      <Box marginTop={1}>
-        <Text dimColor>↑↓: Command history | Enter: Execute | Ctrl+L: Clear output</Text>
-      </Box>
-    </Box>
+      <box marginTop={1}>
+        <text><span fg="#888888">↑↓: Command history | Enter: Execute | Ctrl+L: Clear output</span></text>
+      </box>
+    </box>
   );
 }

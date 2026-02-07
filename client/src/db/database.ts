@@ -7,6 +7,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { mkdirSync, existsSync } from 'fs';
 import type { Server, LogEntry, LogType } from '../types/types.js';
+import { logger } from '../utils/logger.js';
 
 // Database path in user's home directory
 const DB_DIR = join(homedir(), '.servertui');
@@ -23,6 +24,7 @@ export function initDatabase(): Database {
   // Ensure directory exists
   if (!existsSync(DB_DIR)) {
     mkdirSync(DB_DIR, { recursive: true });
+    logger.info('Created database directory', { path: DB_DIR });
   }
 
   db = new Database(DB_PATH);
@@ -62,6 +64,7 @@ export function initDatabase(): Database {
     CREATE INDEX IF NOT EXISTS idx_logs_server_id ON logs(server_id);
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp DESC);
   `);
+  logger.info('Database initialized', { path: DB_PATH });
 
   return db;
 }
@@ -83,6 +86,7 @@ export function closeDatabase(): void {
   if (db) {
     db.close();
     db = null;
+    logger.info('Database connection closed');
   }
 }
 
@@ -158,7 +162,7 @@ export function getServerById(id: string): Server | undefined {
 /**
  * Add a new server
  */
-export function addServer(server: Omit<Server, 'id' | 'createdAt'>): Server {
+export function addServer(server: Omit<Server, 'id' | 'createdAt' | 'lastConnected'>): Server {
   const db = getDatabase();
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -168,6 +172,7 @@ export function addServer(server: Omit<Server, 'id' | 'createdAt'>): Server {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(id, server.name, server.host, server.port, server.username, server.privateKeyPath, server.agentPort, createdAt);
+  logger.info('Added new server', { id, name: server.name, host: server.host });
 
   return {
     id,
@@ -216,7 +221,14 @@ export function updateServer(id: string, updates: Partial<Omit<Server, 'id' | 'c
   if (fields.length > 0) {
     values.push(id);
     const stmt = db.prepare(`UPDATE servers SET ${fields.join(', ')} WHERE id = ?`);
-    stmt.run(...values);
+    const result = stmt.run(...values);
+    if (result.changes > 0) {
+      logger.info('Updated server', { id, fields: fields.map(f => f.split(' ')[0]) });
+    } else {
+      logger.warn('Attempted to update non-existent server or no changes made', { id, updates });
+    }
+  } else {
+    logger.warn('Update server called with no fields to update', { id, updates });
   }
 }
 
@@ -225,7 +237,12 @@ export function updateServer(id: string, updates: Partial<Omit<Server, 'id' | 'c
  */
 export function deleteServer(id: string): void {
   const db = getDatabase();
-  db.prepare('DELETE FROM servers WHERE id = ?').run(id);
+  const result = db.prepare('DELETE FROM servers WHERE id = ?').run(id);
+  if (result.changes > 0) {
+    logger.info('Deleted server', { id });
+  } else {
+    logger.warn('Attempted to delete non-existent server', { id });
+  }
 }
 
 /**

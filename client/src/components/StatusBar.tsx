@@ -2,8 +2,6 @@
 // Status Bar Component
 // =============================================================================
 
-import React from 'react';
-import { Box, Text } from 'ink';
 import type { Server, Tab, AppView } from '../types/types.js';
 
 interface StatusBarProps {
@@ -12,7 +10,7 @@ interface StatusBarProps {
   activeTab: Tab | null;
 }
 
-export function StatusBar({ view, server, activeTab }: StatusBarProps): React.ReactElement {
+export function StatusBar({ view, server, activeTab }: StatusBarProps) {
   const getHelpText = (): string => {
     switch (view) {
       case 'serverList':
@@ -29,24 +27,27 @@ export function StatusBar({ view, server, activeTab }: StatusBarProps): React.Re
   };
 
   return (
-    <Box 
+    <box 
+      border 
       borderStyle="single" 
-      borderColor="gray" 
-      paddingX={1}
+      borderColor="#888888" 
+      paddingLeft={1}
+      paddingRight={1}
       justifyContent="space-between"
+      width="100%"
     >
-      <Box>
-        <Text dimColor>{getHelpText()}</Text>
-      </Box>
+      <box>
+        <text><span fg="#888888">{getHelpText()}</span></text>
+      </box>
       
-      <Box>
+      <box>
         {server && (
-          <Text color="green">● Connected</Text>
+          <text><span fg="#00ff00">● Connected</span></text>
         )}
         {!server && view === 'serverList' && (
-          <Text dimColor>○ No connection</Text>
+          <text><span fg="#888888">○ No connection</span></text>
         )}
-      </Box>
-    </Box>
+      </box>
+    </box>
   );
 }

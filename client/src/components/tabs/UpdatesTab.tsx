@@ -2,19 +2,20 @@
 // Updates Tab Component
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
-import { Box, Text, useInput } from 'ink';
-import Spinner from 'ink-spinner';
+import { useState, useEffect } from 'react';
+import { useKeyboard } from '@opentui/react';
 import type { Server, PackageUpdate } from '../../types/types.js';
 import { getAgentUpdates, applyUpdate, applyAllUpdates } from '../../utils/agent.js';
 import { executeCommand } from '../../utils/ssh.js';
 import { addLogEntry } from '../../db/database.js';
+import { logger } from '../../utils/logger.js';
+import { Spinner } from '../Spinner.js';
 
 interface UpdatesTabProps {
   server: Server;
 }
 
-export function UpdatesTab({ server }: UpdatesTabProps): React.ReactElement {
+export function UpdatesTab({ server }: UpdatesTabProps) {
   const [loading, setLoading] = useState(true);
   const [updates, setUpdates] = useState<PackageUpdate[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -113,28 +114,28 @@ export function UpdatesTab({ server }: UpdatesTabProps): React.ReactElement {
     loadUpdates();
   }, [server.id]);
 
-  useInput((input, key) => {
+  useKeyboard((key) => {
     if (loading || updating) return;
 
-    if (key.upArrow) {
+    if (key.name === 'up') {
       setSelectedIndex(i => Math.max(0, i - 1));
     }
-    if (key.downArrow) {
+    if (key.name === 'down') {
       setSelectedIndex(i => Math.min(updates.length - 1, i + 1));
     }
     
     // Update selected package
-    if (input === 'u' && updates[selectedIndex]) {
+    if (key.name === 'u' && updates[selectedIndex]) {
       handleUpdate(updates[selectedIndex]!.name);
     }
     
     // Update all
-    if (input === 'a' && updates.length > 0) {
+    if (key.name === 'a' && updates.length > 0) {
       handleUpdateAll();
     }
 
     // Refresh
-    if (input === 'r') {
+    if (key.name === 'r') {
       loadUpdates();
     }
   });
@@ -156,7 +157,9 @@ export function UpdatesTab({ server }: UpdatesTabProps): React.ReactElement {
       
       addLogEntry(server.id, 'update', `Updated package: ${packageName}`);
       await loadUpdates();
+      logger.info('Package updated successfully', { server: server.id, package: packageName });
     } catch (err) {
+      logger.error('Package update failed', { server: server.id, package: packageName, error: err });
       setError(err instanceof Error ? err.message : 'Update failed');
     }
     
@@ -178,7 +181,9 @@ export function UpdatesTab({ server }: UpdatesTabProps): React.ReactElement {
       
       addLogEntry(server.id, 'update', 'Applied all available updates');
       await loadUpdates();
+      logger.info('All updates applied successfully', { server: server.id });
     } catch (err) {
+      logger.error('Failed to apply all updates', { server: server.id, error: err });
       setError(err instanceof Error ? err.message : 'Update all failed');
     }
     
@@ -187,46 +192,44 @@ export function UpdatesTab({ server }: UpdatesTabProps): React.ReactElement {
 
   if (loading) {
     return (
-      <Box padding={1}>
-        <Text>
-          <Text color="green"><Spinner type="dots" /></Text>
-          {' '}Checking for updates...
-        </Text>
-      </Box>
+      <box padding={1}>
+        <Spinner color="#00ff00" />
+        <text> Checking for updates...</text>
+      </box>
     );
   }
 
   if (error) {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text color="red">✗ {error}</Text>
-        <Text dimColor>Press 'r' to retry.</Text>
-      </Box>
+      <box flexDirection="column" padding={1}>
+        <text><span fg="#ff0000">✗ {error}</span></text>
+        <text><span fg="#888888">Press 'r' to retry.</span></text>
+      </box>
     );
   }
 
   return (
-    <Box flexDirection="column" padding={1}>
-      <Box marginBottom={1}>
-        <Text bold color="cyan">Available Updates</Text>
-        <Text dimColor> ({updates.length} packages)</Text>
-        {distro !== 'unknown' && <Text dimColor> • {distro}</Text>}
-      </Box>
+    <box flexDirection="column" padding={1}>
+      <box marginBottom={1}>
+        <text><strong><span fg="#00ffff">Available Updates</span></strong></text>
+        <text><span fg="#888888"> ({updates.length} packages)</span></text>
+        {distro !== 'unknown' && <text><span fg="#888888"> • {distro}</span></text>}
+      </box>
 
       {updates.length === 0 ? (
-        <Box flexDirection="column">
-          <Text color="green">✓ System is up to date!</Text>
-          <Text dimColor>Press 'r' to check again.</Text>
-        </Box>
+        <box flexDirection="column">
+          <text><span fg="#00ff00">✓ System is up to date!</span></text>
+          <text><span fg="#888888">Press 'r' to check again.</span></text>
+        </box>
       ) : (
         <>
           {/* Header */}
-          <Box>
-            <Box width={3}><Text dimColor> </Text></Box>
-            <Box width={30}><Text bold dimColor>PACKAGE</Text></Box>
-            <Box width={20}><Text bold dimColor>CURRENT</Text></Box>
-            <Box><Text bold dimColor>AVAILABLE</Text></Box>
-          </Box>
+          <box>
+            <box width={3}><text><span fg="#888888"> </span></text></box>
+            <box width={30}><text><strong><span fg="#888888">PACKAGE</span></strong></text></box>
+            <box width={20}><text><strong><span fg="#888888">CURRENT</span></strong></text></box>
+            <box><text><strong><span fg="#888888">AVAILABLE</span></strong></text></box>
+          </box>
 
           {/* Package List */}
           {updates.map((pkg, i) => {
@@ -234,41 +237,42 @@ export function UpdatesTab({ server }: UpdatesTabProps): React.ReactElement {
             const isUpdating = updating === pkg.name;
             
             return (
-              <Box key={pkg.name}>
-                <Box width={3}>
-                  <Text color={isSelected ? 'cyan' : undefined}>
-                    {isSelected ? '❯ ' : '  '}
-                  </Text>
-                </Box>
-                <Box width={30}>
-                  <Text bold={isSelected}>{pkg.name.slice(0, 28)}</Text>
-                </Box>
-                <Box width={20}>
-                  <Text dimColor>{pkg.currentVersion.slice(0, 18)}</Text>
-                </Box>
-                <Box>
-                  <Text color="green">{pkg.newVersion.slice(0, 20)}</Text>
+              <box key={pkg.name}>
+                <box width={3}>
+                  <text><span fg={isSelected ? '#00ffff' : undefined}>{isSelected ? '❯ ' : '  '}</span></text>
+                </box>
+                <box width={30}>
+                  <text>{isSelected ? <strong>{pkg.name.slice(0, 28)}</strong> : pkg.name.slice(0, 28)}</text>
+                </box>
+                <box width={20}>
+                  <text><span fg="#888888">{pkg.currentVersion.slice(0, 18)}</span></text>
+                </box>
+                <box>
+                  <text><span fg="#00ff00">{pkg.newVersion.slice(0, 20)}</span></text>
                   {isUpdating && (
-                    <Text color="yellow"> <Spinner type="dots" /></Text>
+                    <box marginLeft={1}><Spinner color="#ffff00" /></box>
                   )}
-                </Box>
-              </Box>
+                </box>
+              </box>
             );
           })}
 
           {/* Help */}
-          <Box marginTop={1}>
-            <Text dimColor>
-              ↑↓: Navigate | u: Update selected | a: Update all | r: Refresh
-            </Text>
+          <box marginTop={1}>
+            <text>
+              <span fg="#888888">
+                ↑↓: Navigate | u: Update selected | a: Update all | r: Refresh
+              </span>
+            </text>
             {updating === 'all' && (
-              <Text color="yellow">
-                {' '}<Spinner type="dots" /> Updating all packages...
-              </Text>
+              <box marginLeft={1}>
+                <Spinner color="#ffff00" />
+                <text> Updating all packages...</text>
+              </box>
             )}
-          </Box>
+          </box>
         </>
       )}
-    </Box>
+    </box>
   );
 }

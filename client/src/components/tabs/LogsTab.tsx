@@ -2,8 +2,8 @@
 // Logs Tab Component
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { useState, useEffect } from 'react';
+import { useKeyboard } from '@opentui/react';
 import type { Server, LogEntry, LogType } from '../../types/types.js';
 import { getLogsForServer, clearLogsForServer } from '../../db/database.js';
 import { formatDateTime } from '../../utils/format.js';
@@ -13,12 +13,12 @@ interface LogsTabProps {
 }
 
 const LOG_TYPE_COLORS: Record<LogType, string> = {
-  command: 'cyan',
-  ssh: 'blue',
-  update: 'green',
-  docker: 'magenta',
-  error: 'red',
-  info: 'gray',
+  command: '#00ffff',
+  ssh: '#0088ff',
+  update: '#00ff00',
+  docker: '#ff00ff',
+  error: '#ff0000',
+  info: '#888888',
 };
 
 const LOG_TYPE_LABELS: Record<LogType, string> = {
@@ -30,7 +30,7 @@ const LOG_TYPE_LABELS: Record<LogType, string> = {
   info: 'INF',
 };
 
-export function LogsTab({ server }: LogsTabProps): React.ReactElement {
+export function LogsTab({ server }: LogsTabProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState<LogType | 'all'>('all');
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -54,31 +54,31 @@ export function LogsTab({ server }: LogsTabProps): React.ReactElement {
 
   const visibleLogs = filteredLogs.slice(scrollOffset, scrollOffset + 15);
 
-  useInput((input, key) => {
+  useKeyboard((key) => {
     // Scroll
-    if (key.upArrow) {
+    if (key.name === 'up') {
       setScrollOffset(o => Math.max(0, o - 1));
     }
-    if (key.downArrow) {
+    if (key.name === 'down') {
       setScrollOffset(o => Math.min(Math.max(0, filteredLogs.length - 15), o + 1));
     }
-    if (key.pageUp) {
+    if (key.name === 'pageup') {
       setScrollOffset(o => Math.max(0, o - 10));
     }
-    if (key.pageDown) {
+    if (key.name === 'pagedown') {
       setScrollOffset(o => Math.min(Math.max(0, filteredLogs.length - 15), o + 10));
     }
 
     // Filter by type
-    if (input === '1') setFilter('all');
-    if (input === '2') setFilter('command');
-    if (input === '3') setFilter('ssh');
-    if (input === '4') setFilter('update');
-    if (input === '5') setFilter('docker');
-    if (input === '6') setFilter('error');
+    if (key.name === '1') setFilter('all');
+    if (key.name === '2') setFilter('command');
+    if (key.name === '3') setFilter('ssh');
+    if (key.name === '4') setFilter('update');
+    if (key.name === '5') setFilter('docker');
+    if (key.name === '6') setFilter('error');
 
     // Clear logs
-    if (input === 'c') {
+    if (key.name === 'c') {
       if (confirmClear) {
         clearLogsForServer(server.id);
         loadLogs();
@@ -89,84 +89,85 @@ export function LogsTab({ server }: LogsTabProps): React.ReactElement {
       }
     }
     
-    if (key.escape) {
+    if (key.name === 'escape') {
       setConfirmClear(false);
     }
 
     // Refresh
-    if (input === 'r') {
+    if (key.name === 'r') {
       loadLogs();
     }
   });
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <box flexDirection="column" padding={1}>
       {/* Header and Filters */}
-      <Box marginBottom={1}>
-        <Text bold color="cyan">Session History</Text>
-        <Text dimColor> ({filteredLogs.length} entries)</Text>
-      </Box>
+      <box marginBottom={1}>
+        <text><strong><span fg="#00ffff">Session History</span></strong></text>
+        <text><span fg="#888888"> ({filteredLogs.length} entries)</span></text>
+      </box>
 
-      <Box marginBottom={1}>
-        <Text dimColor>Filter: </Text>
+      <box marginBottom={1}>
+        <text><span fg="#888888">Filter: </span></text>
         {(['all', 'command', 'ssh', 'update', 'docker', 'error'] as const).map((type, i) => (
-          <Text key={type}>
-            <Text 
-              color={filter === type ? 'cyan' : 'gray'}
-              bold={filter === type}
-            >
-              [{i + 1}] {type === 'all' ? 'All' : LOG_TYPE_LABELS[type]}
-            </Text>
-            <Text> </Text>
-          </Text>
+          <text key={type}>
+            {filter === type ? (
+              <strong><span fg="#00ffff">[{i + 1}] {type === 'all' ? 'All' : LOG_TYPE_LABELS[type]}</span></strong>
+            ) : (
+              <span fg="#888888">[{i + 1}] {type === 'all' ? 'All' : LOG_TYPE_LABELS[type]}</span>
+            )}
+            <span> </span>
+          </text>
         ))}
-      </Box>
+      </box>
 
       {/* Log Entries */}
-      <Box flexDirection="column" flexGrow={1}>
+      <box flexDirection="column" flexGrow={1}>
         {filteredLogs.length === 0 ? (
-          <Text dimColor>No logs recorded for this server.</Text>
+          <text><span fg="#888888">No logs recorded for this server.</span></text>
         ) : (
-          visibleLogs.map((log, i) => (
-            <Box key={log.id}>
-              <Box width={16}>
-                <Text dimColor>{formatDateTime(log.timestamp)}</Text>
-              </Box>
-              <Box width={6}>
-                <Text color={LOG_TYPE_COLORS[log.type] as any}>
-                  [{LOG_TYPE_LABELS[log.type]}]
-                </Text>
-              </Box>
-              <Box>
-                <Text>{log.content.slice(0, 60)}</Text>
-              </Box>
-            </Box>
+          visibleLogs.map((log) => (
+            <box key={log.id}>
+              <box width={16}>
+                <text><span fg="#888888">{formatDateTime(log.timestamp)}</span></text>
+              </box>
+              <box width={6}>
+                <text><span fg={LOG_TYPE_COLORS[log.type]}>[{LOG_TYPE_LABELS[log.type]}]</span></text>
+              </box>
+              <box>
+                <text>{log.content.slice(0, 60)}</text>
+              </box>
+            </box>
           ))
         )}
-      </Box>
+      </box>
 
       {/* Scroll indicator */}
       {filteredLogs.length > 15 && (
-        <Box marginTop={1}>
-          <Text dimColor>
-            Showing {scrollOffset + 1}-{Math.min(scrollOffset + 15, filteredLogs.length)} of {filteredLogs.length}
-          </Text>
-        </Box>
+        <box marginTop={1}>
+          <text>
+            <span fg="#888888">
+              Showing {scrollOffset + 1}-{Math.min(scrollOffset + 15, filteredLogs.length)} of {filteredLogs.length}
+            </span>
+          </text>
+        </box>
       )}
 
       {/* Clear confirmation */}
       {confirmClear && (
-        <Box marginTop={1}>
-          <Text color="yellow">Press 'c' again to clear all logs, or Esc to cancel</Text>
-        </Box>
+        <box marginTop={1}>
+          <text><span fg="#ffff00">Press 'c' again to clear all logs, or Esc to cancel</span></text>
+        </box>
       )}
 
       {/* Help */}
-      <Box marginTop={1}>
-        <Text dimColor>
-          ↑↓: Scroll | 1-6: Filter | r: Refresh | c: Clear
-        </Text>
-      </Box>
-    </Box>
+      <box marginTop={1}>
+        <text>
+          <span fg="#888888">
+            ↑↓: Scroll | 1-6: Filter | r: Refresh | c: Clear
+          </span>
+        </text>
+      </box>
+    </box>
   );
 }

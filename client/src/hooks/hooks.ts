@@ -62,6 +62,7 @@ export function useConnection(server: Server | null): UseConnectionResult {
       setError(null);
 
       try {
+        logger.debug('useConnection: Auto-connecting', { server: server.id });
         await getConnection(server);
         if (!mountedRef.current) return;
         setStatus('connected');
@@ -70,6 +71,7 @@ export function useConnection(server: Server | null): UseConnectionResult {
       } catch (err) {
         if (!mountedRef.current) return;
         const msg = err instanceof Error ? err.message : 'Connection failed';
+        logger.error('useConnection: Auto-connect failed', { server: server.id, error: msg });
         setError(msg);
         setStatus('error');
       } finally {
@@ -92,12 +94,14 @@ export function useConnection(server: Server | null): UseConnectionResult {
     setError(null);
 
     try {
+      logger.info('useConnection: Manual connect requested', { server: server.id });
       await getConnection(server);
       setStatus('connected');
       const info = await getSystemInfo(server);
       setSystemInfo(info);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Connection failed';
+      logger.error('useConnection: Manual connect failed', { server: server.id, error: msg });
       setError(msg);
       setStatus('error');
     } finally {
@@ -106,10 +110,11 @@ export function useConnection(server: Server | null): UseConnectionResult {
   }, [server?.id]);
 
   const disconnect = useCallback(() => {
+    logger.info('useConnection: Disconnecting', { server: server?.id });
     disconnectServer();
     setStatus('disconnected');
     setSystemInfo(null);
-  }, []);
+  }, [server?.id]);
 
   return { status, systemInfo, error, connect, disconnect };
 }

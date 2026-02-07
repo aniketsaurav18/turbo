@@ -2,52 +2,44 @@
 // SSH Tab Component
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
-import { Box, Text, useInput } from 'ink';
-import TextInput from 'ink-text-input';
-import Spinner from 'ink-spinner';
+import { useState, useRef, useEffect } from 'react';
+import { useKeyboard } from '@opentui/react';
 import type { Server } from '../../types/types.js';
 import { useConnection } from '../../hooks/hooks.js';
-import { execCommand } from '../../utils/connection.js';
+import { executeCommand } from '../../utils/ssh.js';
+import { addLogEntry } from '../../db/database.js';
+import { Spinner } from '../Spinner.js';
+import { logger } from '../../utils/logger.js';
 
 interface SSHTabProps {
   server: Server;
 }
 
-interface HistoryEntry {
-  command: string;
-  output: string;
-  exitCode: number;
-  timestamp: Date;
+interface OutputLine {
+  type: 'command' | 'stdout' | 'stderr';
+  content: string;
 }
 
-const MAX_HISTORY = 50;
-const MAX_OUTPUT_LINES = 20;
-
-export function SSHTab({ server }: SSHTabProps): React.ReactElement {
-  const { status, error, connect } = useConnection(server);
+export function SSHTab({ server }: SSHTabProps) {
+  const { status, error } = useConnection(server);
   const [command, setCommand] = useState('');
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [output, setOutput] = useState<OutputLine[]>([]);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [isExecuting, setIsExecuting] = useState(false);
-  const [cwd, setCwd] = useState('~');
+  const [currentDir, setCurrentDir] = useState('~');
 
-  // Auto-connect on mount
-  useEffect(() => {
-    if (status === 'disconnected') {
-      connect();
-    }
-  }, []);
+  useKeyboard((key) => {
+    if (status !== 'connected') return;
 
-  useInput((input, key) => {
-    if (key.upArrow && commandHistory.length > 0) {
+    // Navigate command history
+    if (key.name === 'up' && commandHistory.length > 0 && !isExecuting) {
       const newIndex = Math.min(historyIndex + 1, commandHistory.length - 1);
       setHistoryIndex(newIndex);
       setCommand(commandHistory[commandHistory.length - 1 - newIndex] ?? '');
     }
     
-    if (key.downArrow) {
+    if (key.name === 'down' && !isExecuting) {
       const newIndex = Math.max(historyIndex - 1, -1);
       setHistoryIndex(newIndex);
       if (newIndex === -1) {
@@ -57,9 +49,9 @@ export function SSHTab({ server }: SSHTabProps): React.ReactElement {
       }
     }
 
-    // Clear screen with Ctrl+L
-    if (key.ctrl && input === 'l') {
-      setHistory([]);
+    // Clear screen
+    if (key.ctrl && key.name === 'l') {
+      setOutput([]);
     }
   });
 
@@ -69,40 +61,56 @@ export function SSHTab({ server }: SSHTabProps): React.ReactElement {
     const cmd = command.trim();
     setCommand('');
     setHistoryIndex(-1);
-    
-    // Add to command history
-    setCommandHistory(prev => [...prev.slice(-MAX_HISTORY), cmd]);
+    setCommandHistory(prev => [...prev.slice(-50), cmd]);
+    setOutput(prev => [...prev, { type: 'command', content: `${currentDir} $ ${cmd}` }]);
 
-    // Handle cd specially for UX
-    if (cmd.startsWith('cd ')) {
-      const dir = cmd.slice(3).trim() || '~';
-      setCwd(dir);
+    // Handle clear command locally
+    if (cmd === 'clear' || cmd === 'cls') {
+      logger.debug('User cleared SSH terminal');
+      setOutput([]);
+      return;
     }
 
     setIsExecuting(true);
+    logger.info('Executing SSH command', { server: server.id, command: cmd });
 
     try {
-      const result = await execCommand(server, cmd);
-      
-      // Truncate output if too long
-      let output = result.stdout || result.stderr;
-      const lines = output.split('\n');
-      if (lines.length > MAX_OUTPUT_LINES) {
-        output = lines.slice(0, MAX_OUTPUT_LINES).join('\n') + `\n... (${lines.length - MAX_OUTPUT_LINES} more lines)`;
+      // Handle cd command specially
+      if (cmd.startsWith('cd ')) {
+        const targetDir = cmd.slice(3).trim();
+        const result = await executeCommand(server, `cd ${targetDir} && pwd`);
+        if (result.exitCode === 0) {
+          setCurrentDir(result.stdout.trim());
+        } else {
+          setOutput(prev => [...prev, { type: 'stderr', content: result.stderr || 'Directory not found' }]);
+        }
+      } else {
+        // Execute command in current directory
+        const fullCmd = currentDir !== '~' 
+          ? `cd ${currentDir} && ${cmd}` 
+          : cmd;
+        
+        const result = await executeCommand(server, fullCmd);
+        
+        if (result.stdout) {
+          // Split into lines and add each
+          result.stdout.split('\n').forEach(line => {
+            setOutput(prev => [...prev, { type: 'stdout', content: line }]);
+          });
+        }
+        if (result.stderr) {
+          result.stderr.split('\n').forEach(line => {
+            setOutput(prev => [...prev, { type: 'stderr', content: line }]);
+          });
+        }
       }
 
-      setHistory(prev => [...prev.slice(-MAX_HISTORY), {
-        command: cmd,
-        output,
-        exitCode: result.code,
-        timestamp: new Date(),
-      }]);
+      addLogEntry(server.id, 'ssh', cmd);
     } catch (err) {
-      setHistory(prev => [...prev.slice(-MAX_HISTORY), {
-        command: cmd,
-        output: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        exitCode: -1,
-        timestamp: new Date(),
+      logger.error('SSH command execution failed', { server: server.id, command: cmd, error: err });
+      setOutput(prev => [...prev, { 
+        type: 'stderr', 
+        content: err instanceof Error ? err.message : 'Command failed' 
       }]);
     }
 
@@ -111,76 +119,74 @@ export function SSHTab({ server }: SSHTabProps): React.ReactElement {
 
   if (status === 'connecting') {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text>
-          <Text color="green"><Spinner type="dots" /></Text>
-          {' '}Establishing SSH connection...
-        </Text>
-      </Box>
+      <box padding={1}>
+        <Spinner color="#00ff00" />
+        <text> Connecting to {server.host}...</text>
+      </box>
     );
   }
 
   if (status === 'error') {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text color="red">✗ SSH Connection Failed</Text>
-        <Text dimColor>{error}</Text>
-        <Box marginTop={1}>
-          <Text dimColor>Check that your SSH key ({server.privateKeyPath}) is valid and has access to {server.host}.</Text>
-        </Box>
-      </Box>
+      <box flexDirection="column" padding={1}>
+        <text><span fg="#ff0000">✗ SSH connection failed: {error}</span></text>
+        <text><span fg="#888888">Check your SSH key and network connectivity.</span></text>
+      </box>
     );
   }
 
+  // Keep last 50 lines visible
+  const visibleOutput = output.slice(-50);
+
   return (
-    <Box flexDirection="column" height="100%">
-      {/* Output History */}
-      <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {history.length === 0 && (
-          <Text dimColor>SSH shell ready. Type commands below.</Text>
-        )}
-        {history.map((entry, i) => (
-          <Box key={i} flexDirection="column" marginBottom={1}>
-            <Text>
-              <Text color="cyan">{server.username}@{server.host}</Text>
-              <Text>:</Text>
-              <Text color="blue">{cwd}</Text>
-              <Text color="gray">$ </Text>
-              <Text>{entry.command}</Text>
-            </Text>
-            {entry.output && (
-              <Text color={entry.exitCode !== 0 ? 'red' : undefined}>
-                {entry.output}
-              </Text>
+    <box flexDirection="column" height="100%">
+      <box marginBottom={1}>
+        <text><strong><span fg="#00ffff">SSH Shell</span></strong></text>
+        <text><span fg="#888888"> • {server.username}@{server.host}</span></text>
+      </box>
+      
+      {/* Output Area */}
+      <box flexDirection="column" flexGrow={1}>
+        {visibleOutput.map((line, i) => (
+          <text key={i}>
+            {line.type === 'command' ? (
+              <strong><span fg="#00ffff">{line.content}</span></strong>
+            ) : line.type === 'stderr' ? (
+              <span fg="#ff0000">{line.content}</span>
+            ) : (
+              <span>{line.content}</span>
             )}
-          </Box>
+          </text>
         ))}
-      </Box>
+      </box>
 
       {/* Command Input */}
-      <Box borderStyle="single" borderColor="gray" paddingX={1}>
-        <Text color="cyan">{server.username}@{server.host}</Text>
-        <Text>:</Text>
-        <Text color="blue">{cwd}</Text>
-        <Text color="gray">$ </Text>
-        {isExecuting ? (
-          <Text>
-            <Text color="yellow"><Spinner type="dots" /></Text>
-            {' '}Running...
-          </Text>
-        ) : (
-          <TextInput
-            value={command}
-            onChange={setCommand}
-            onSubmit={handleSubmit}
-            placeholder="Enter command..."
-          />
-        )}
-      </Box>
+      <box flexDirection="column" border borderStyle="single" borderColor="#888888" padding={1}>
+        <box>
+          <text><span fg="#00ffff">{currentDir} $ </span></text>
+          {isExecuting ? (
+            <box>
+              <Spinner color="#ffff00" />
+              <text><span fg="#888888"> Executing...</span></text>
+            </box>
+          ) : (
+            <input
+              value={command}
+              onChange={(v) => setCommand(v)}
+              onSubmit={handleSubmit}
+              placeholder="Enter command..."
+              focused
+              width={50}
+            />
+          )}
+        </box>
+      </box>
 
-      <Box>
-        <Text dimColor>↑↓: History | Enter: Execute | Ctrl+L: Clear</Text>
-      </Box>
-    </Box>
+      <box marginTop={1}>
+        <text>
+          <span fg="#888888">↑↓: History | Enter: Execute | Ctrl+L: Clear</span>
+        </text>
+      </box>
+    </box>
   );
 }

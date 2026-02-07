@@ -209,26 +209,40 @@ export async function getSystemInfo(server: Server): Promise<SystemInfo> {
   }
 
   // Run commands sequentially to avoid listener buildup
-  const hostname = await execCommand(server, 'hostname');
-  const osInfo = await execCommand(server, 'cat /etc/os-release 2>/dev/null | grep -E "^PRETTY_NAME" | cut -d= -f2 | tr -d \'"\'');
-  const kernel = await execCommand(server, 'uname -r');
-  const uptime = await execCommand(server, 'cat /proc/uptime | cut -d" " -f1');
-  const arch = await execCommand(server, 'uname -m');
+  const result = await execCommand(server, `
+    echo "HOSTNAME:$(hostname)";
+    echo "OS:$(cat /etc/os-release 2>/dev/null | grep -E "^PRETTY_NAME" | cut -d= -f2 | tr -d '"')";
+    echo "KERNEL:$(uname -r)";
+    echo "UPTIME:$(cat /proc/uptime | cut -d" " -f1)";
+    echo "ARCH:$(uname -m)"
+  `);
+
+  const lines = result.stdout.split('\n');
+  let hostname = 'unknown', osInfo = 'Linux', kernel = 'unknown', uptime = '0', arch = 'unknown';
+
+  for (const line of lines) {
+    if (line.startsWith('HOSTNAME:')) hostname = line.slice(9).trim();
+    if (line.startsWith('OS:')) osInfo = line.slice(3).trim();
+    if (line.startsWith('KERNEL:')) kernel = line.slice(7).trim();
+    if (line.startsWith('UPTIME:')) uptime = line.slice(7).trim();
+    if (line.startsWith('ARCH:')) arch = line.slice(5).trim();
+  }
 
   const info: SystemInfo = {
-    hostname: hostname.stdout.trim() || 'unknown',
-    os: osInfo.stdout.trim() || 'Linux',
-    osVersion: osInfo.stdout.trim(),
-    kernel: kernel.stdout.trim() || 'unknown',
-    uptime: parseFloat(uptime.stdout.trim()) || 0,
-    architecture: arch.stdout.trim() || 'unknown',
+    hostname: hostname || 'unknown',
+    os: osInfo || 'Linux',
+    osVersion: osInfo,
+    kernel: kernel || 'unknown',
+    uptime: parseFloat(uptime) || 0,
+    architecture: arch || 'unknown',
   };
 
   // Cache it
   if (activeConnection?.serverId === server.id) {
     activeConnection.systemInfo = info;
   }
-
+  
+  logger.info('ConnectionManager: Fetched system info', { serverId: server.id });
   return info;
 }
 

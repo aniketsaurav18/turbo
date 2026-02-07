@@ -2,12 +2,13 @@
 // Main App Component
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { useState, useEffect } from 'react';
+import { useKeyboard, useRenderer } from '@opentui/react';
 import type { Server, Tab, AppView } from '../types/types.js';
 import { ALL_TABS, Tab as TabEnum } from '../types/types.js';
 import { getAllServers, initDatabase } from '../db/database.js';
 import { disconnectAllSSH } from '../utils/ssh.js';
+import { logger } from '../utils/logger.js';
 
 // Components
 import { ServerList } from './ServerList.js';
@@ -25,8 +26,8 @@ import { CommandsTab } from './tabs/CommandsTab.js';
 import { UpdatesTab } from './tabs/UpdatesTab.js';
 import { LogsTab } from './tabs/LogsTab.js';
 
-export function App(): React.ReactElement {
-  const { exit } = useApp();
+export function App() {
+  const renderer = useRenderer();
   const [view, setView] = useState<AppView>('serverList');
   const [servers, setServers] = useState<Server[]>([]);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
@@ -45,20 +46,23 @@ export function App(): React.ReactElement {
     
     // Auto-show add form if no servers
     if (loadedServers.length === 0 && view === 'serverList') {
+      logger.info('No servers found, switching to add server view');
       setView('addServer');
     }
   };
 
   // Global keyboard shortcuts
-  useInput((input, key) => {
-    // Quit on Ctrl+C or q (when not in input mode)
-    if (input === 'q' && view === 'serverList') {
+  useKeyboard((key) => {
+    // Quit on q (when in server list)
+    if (key.name === 'q' && view === 'serverList') {
+      logger.info('User quit application via keyboard');
       disconnectAllSSH();
-      exit();
+      renderer.destroy();
+      return;
     }
     
     // Escape to go back
-    if (key.escape) {
+    if (key.name === 'escape') {
       if (view === 'dashboard') {
         setView('serverList');
         setSelectedServer(null);
@@ -70,8 +74,8 @@ export function App(): React.ReactElement {
     }
 
     // Tab navigation with numbers 1-7
-    if (view === 'dashboard' && /^[1-7]$/.test(input)) {
-      const tabIndex = parseInt(input, 10) - 1;
+    if (view === 'dashboard' && /^[1-7]$/.test(key.name)) {
+      const tabIndex = parseInt(key.name, 10) - 1;
       if (tabIndex < ALL_TABS.length) {
         setActiveTab(ALL_TABS[tabIndex]!);
       }
@@ -79,12 +83,12 @@ export function App(): React.ReactElement {
 
     // Tab navigation with up/down arrow keys (vertical sidebar)
     if (view === 'dashboard') {
-      if (key.upArrow) {
+      if (key.name === 'up') {
         const currentIndex = ALL_TABS.indexOf(activeTab);
         const newIndex = currentIndex > 0 ? currentIndex - 1 : ALL_TABS.length - 1;
         setActiveTab(ALL_TABS[newIndex]!);
       }
-      if (key.downArrow) {
+      if (key.name === 'down') {
         const currentIndex = ALL_TABS.indexOf(activeTab);
         const newIndex = (currentIndex + 1) % ALL_TABS.length;
         setActiveTab(ALL_TABS[newIndex]!);
@@ -93,6 +97,7 @@ export function App(): React.ReactElement {
   });
 
   const handleSelectServer = (server: Server) => {
+    logger.info('Selected server', { id: server.id, name: server.name });
     setSelectedServer(server);
     setActiveTab(TabEnum.Overview);
     setView('dashboard');
@@ -103,6 +108,7 @@ export function App(): React.ReactElement {
   };
 
   const handleEditServer = (server: Server) => {
+    logger.info('Editing server', { id: server.id, name: server.name });
     setEditingServer(server);
     setView('editServer');
   };
@@ -147,24 +153,26 @@ export function App(): React.ReactElement {
       case TabEnum.Logs:
         return <LogsTab server={selectedServer} />;
       default:
-        return <Text>Unknown tab</Text>;
+        return <text>Unknown tab</text>;
     }
   };
 
   return (
-    <Box flexDirection="column" height="100%">
+    <box flexDirection="column" height="100%">
       {/* Header */}
-      <Box borderStyle="single" borderColor="cyan" paddingX={1}>
-        <Text bold color="cyan">
-          🖥️  ServerTUI
-        </Text>
+      <box borderStyle="rounded" borderColor="cyan" paddingLeft={1} paddingRight={1} width="100%" flexDirection="row">
+        <text>
+          <strong><span fg="#00ffff">🖥️  ServerTUI</span></strong>
+        </text>
         {selectedServer && (
-          <Text color="gray"> • {selectedServer.name} ({selectedServer.host})</Text>
+          <text>
+            <span fg="#888888"> • {selectedServer.name} ({selectedServer.host})</span>
+          </text>
         )}
-      </Box>
+      </box>
 
       {/* Main Content */}
-      <Box flexDirection="row" flexGrow={1}>
+      <box flexDirection="row" flexGrow={1}>
         {view === 'serverList' && (
           <ServerList
             servers={servers}
@@ -196,12 +204,12 @@ export function App(): React.ReactElement {
             <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
             
             {/* Tab Content */}
-            <Box flexDirection="column" flexGrow={1} paddingX={1}>
+            <box flexDirection="column" flexGrow={1} paddingLeft={1} paddingRight={1}>
               {renderTabContent()}
-            </Box>
+            </box>
           </>
         )}
-      </Box>
+      </box>
 
       {/* Status Bar */}
       <StatusBar 
@@ -209,6 +217,6 @@ export function App(): React.ReactElement {
         server={selectedServer}
         activeTab={view === 'dashboard' ? activeTab : null}
       />
-    </Box>
+    </box>
   );
 }

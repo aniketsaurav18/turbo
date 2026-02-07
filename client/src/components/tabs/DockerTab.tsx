@@ -2,13 +2,14 @@
 // Docker Tab Component
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
-import { Box, Text, useInput } from 'ink';
-import Spinner from 'ink-spinner';
-import type { Server, DockerContainer, DockerImage, DockerStatus } from '../../types/types.js';
+import { useState, useEffect } from 'react';
+import { useKeyboard } from '@opentui/react';
+import type { Server, DockerContainer, DockerImage } from '../../types/types.js';
 import { getAgentDocker, startContainer, stopContainer } from '../../utils/agent.js';
 import { executeCommand } from '../../utils/ssh.js';
-import { formatBytes, truncate, getContainerStatusColor } from '../../utils/format.js';
+import { formatBytes } from '../../utils/format.js';
+import { logger } from '../../utils/logger.js';
+import { Spinner } from '../Spinner.js';
 
 interface DockerTabProps {
   server: Server;
@@ -16,71 +17,84 @@ interface DockerTabProps {
 
 type DockerView = 'containers' | 'images';
 
-export function DockerTab({ server }: DockerTabProps): React.ReactElement {
+export function DockerTab({ server }: DockerTabProps) {
   const [loading, setLoading] = useState(true);
+  const [containers, setContainers] = useState<DockerContainer[]>([]);
+  const [images, setImages] = useState<DockerImage[]>([]);
+  const [dockerInstalled, setDockerInstalled] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [dockerStatus, setDockerStatus] = useState<DockerStatus | null>(null);
-  const [view, setView] = useState<DockerView>('containers');
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [actionInProgress, setActionInProgress] = useState(false);
+  const [view, setView] = useState<DockerView>('containers');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const loadDockerStatus = async () => {
+  const loadDockerData = async () => {
     setLoading(true);
     setError(null);
 
     try {
       // Try agent first
       const status = await getAgentDocker(server);
-      setDockerStatus(status);
+      setContainers(status.containers);
+      setImages(status.images);
+      setDockerInstalled(status.installed);
     } catch {
       // Fallback to SSH
       try {
-        const result = await executeCommand(server, 'docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.State}}"');
+        // Check if docker is installed
+        const checkResult = await executeCommand(server, 'which docker 2>/dev/null');
+        if (checkResult.exitCode !== 0) {
+          setDockerInstalled(false);
+          setLoading(false);
+          return;
+        }
+
+        // Get containers
+        const containersResult = await executeCommand(server, 
+          'docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.State}}"'
+        );
         
-        if (result.exitCode !== 0) {
-          // Docker might not be installed
-          if (result.stderr.includes('not found') || result.stderr.includes('command not found')) {
-            setDockerStatus({ installed: false, containers: [], images: [] });
-          } else {
-            setError(result.stderr || 'Failed to get Docker status');
-          }
-        } else {
-          const containers: DockerContainer[] = result.stdout
+        if (containersResult.exitCode === 0) {
+          const containerList: DockerContainer[] = containersResult.stdout
             .split('\n')
             .filter(Boolean)
             .map(line => {
               const [id, name, image, status, state] = line.split('|');
               return {
-                id: id || '',
-                name: name || '',
-                image: image || '',
-                status: status || '',
-                state: (state as DockerContainer['state']) || 'exited',
+                id: id ?? '',
+                name: name ?? '',
+                image: image ?? '',
+                status: status ?? '',
+                state: (state ?? 'created') as DockerContainer['state'],
                 ports: [],
                 created: '',
               };
             });
+          setContainers(containerList);
+        }
 
-          // Get images too
-          const imagesResult = await executeCommand(server, 'docker images --format "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}"');
-          const images: DockerImage[] = imagesResult.stdout
+        // Get images
+        const imagesResult = await executeCommand(server,
+          'docker images --format "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}"'
+        );
+        
+        if (imagesResult.exitCode === 0) {
+          const imageList: DockerImage[] = imagesResult.stdout
             .split('\n')
             .filter(Boolean)
             .map(line => {
               const [id, repo, tag, size] = line.split('|');
               return {
-                id: id || '',
-                repository: repo || '',
-                tag: tag || '',
-                size: parseFloat(size || '0') * 1024 * 1024, // Approximate
+                id: id ?? '',
+                repository: repo ?? '',
+                tag: tag ?? '',
+                size: parseInt(size ?? '0', 10) || 0,
                 created: '',
               };
             });
-
-          setDockerStatus({ installed: true, containers, images });
+          setImages(imageList);
         }
       } catch (sshErr) {
-        setError(sshErr instanceof Error ? sshErr.message : 'Failed to check Docker');
+        setError(sshErr instanceof Error ? sshErr.message : 'Failed to get Docker info');
       }
     }
 
@@ -88,202 +102,201 @@ export function DockerTab({ server }: DockerTabProps): React.ReactElement {
   };
 
   useEffect(() => {
-    loadDockerStatus();
+    loadDockerData();
   }, [server.id]);
 
-  const items = view === 'containers' 
-    ? dockerStatus?.containers ?? [] 
-    : dockerStatus?.images ?? [];
+  const currentList = view === 'containers' ? containers : images;
 
-  useInput((input, key) => {
-    if (key.upArrow) {
+  useKeyboard((key) => {
+    if (loading || actionLoading) return;
+
+    // Navigation
+    if (key.name === 'up') {
       setSelectedIndex(i => Math.max(0, i - 1));
     }
-    if (key.downArrow) {
-      setSelectedIndex(i => Math.min(items.length - 1, i + 1));
+    if (key.name === 'down') {
+      setSelectedIndex(i => Math.min(currentList.length - 1, i + 1));
     }
-    
-    // Toggle view
-    if (key.tab || input === 'v') {
-      setView(v => v === 'containers' ? 'images' : 'containers');
+
+    // Switch view
+    if (key.name === 'tab' || key.name === 'c') {
+      setView(view === 'containers' ? 'images' : 'containers');
       setSelectedIndex(0);
     }
 
     // Refresh
-    if (input === 'r') {
-      loadDockerStatus();
+    if (key.name === 'r') {
+      loadDockerData();
     }
 
     // Start/Stop container
-    if (input === 's' && view === 'containers' && dockerStatus?.containers[selectedIndex]) {
-      handleContainerAction(dockerStatus.containers[selectedIndex]!);
+    if ((key.name === 's' || key.name === 'enter') && view === 'containers' && containers[selectedIndex]) {
+      const container = containers[selectedIndex]!;
+      handleContainerAction(container);
     }
   });
 
   const handleContainerAction = async (container: DockerContainer) => {
-    setActionInProgress(true);
+    setActionLoading(container.id);
+    const action = container.state === 'running' ? 'stop' : 'start';
+    
     try {
       if (container.state === 'running') {
-        await stopContainer(server, container.id);
+        try {
+          await stopContainer(server, container.id);
+        } catch {
+          await executeCommand(server, `docker stop ${container.id}`);
+        }
       } else {
-        await startContainer(server, container.id);
+        try {
+          await startContainer(server, container.id);
+        } catch {
+          await executeCommand(server, `docker start ${container.id}`);
+        }
       }
-      await loadDockerStatus();
+      await loadDockerData();
+      logger.info('Docker container action completed', { server: server.id, container: container.id, action });
     } catch (err) {
+      logger.error('Docker action failed', { server: server.id, container: container.id, action, error: err });
       setError(err instanceof Error ? err.message : 'Action failed');
     }
-    setActionInProgress(false);
+    
+    setActionLoading(null);
   };
 
   if (loading) {
     return (
-      <Box padding={1}>
-        <Text>
-          <Text color="green"><Spinner type="dots" /></Text>
-          {' '}Loading Docker status...
-        </Text>
-      </Box>
+      <box padding={1}>
+        <Spinner color="#00ff00" />
+        <text> Loading Docker info...</text>
+      </box>
     );
   }
 
-  if (!dockerStatus?.installed) {
+  if (!dockerInstalled) {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text color="yellow">⚠ Docker is not installed on this server</Text>
-        <Text dimColor>Install Docker to manage containers here.</Text>
-      </Box>
+      <box flexDirection="column" padding={1}>
+        <text><span fg="#ffff00">⚠ Docker is not installed on this server.</span></text>
+        <text><span fg="#888888">Install Docker to manage containers.</span></text>
+      </box>
     );
   }
 
   if (error) {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text color="red">✗ {error}</Text>
-        <Text dimColor>Press 'r' to retry.</Text>
-      </Box>
+      <box flexDirection="column" padding={1}>
+        <text><span fg="#ff0000">✗ {error}</span></text>
+        <text><span fg="#888888">Press 'r' to retry.</span></text>
+      </box>
     );
   }
 
   return (
-    <Box flexDirection="column" padding={1}>
-      {/* View Toggle */}
-      <Box marginBottom={1}>
-        <Text 
-          bold={view === 'containers'} 
-          color={view === 'containers' ? 'cyan' : 'gray'}
-        >
-          Containers ({dockerStatus.containers.length})
-        </Text>
-        <Text> | </Text>
-        <Text 
-          bold={view === 'images'} 
-          color={view === 'images' ? 'cyan' : 'gray'}
-        >
-          Images ({dockerStatus.images.length})
-        </Text>
-        <Text dimColor> (Tab or 'v' to switch)</Text>
-      </Box>
-
-      {/* Container List */}
-      {view === 'containers' && (
-        <Box flexDirection="column">
-          {dockerStatus.containers.length === 0 ? (
-            <Text dimColor>No containers found.</Text>
+    <box flexDirection="column" padding={1}>
+      {/* Header and View Tabs */}
+      <box marginBottom={1}>
+        <text>
+          {view === 'containers' ? (
+            <strong><span fg="#00ffff">[Containers]</span></strong>
           ) : (
-            <>
-              {/* Header */}
-              <Box>
-                <Box width={3}><Text dimColor> </Text></Box>
-                <Box width={20}><Text bold dimColor>NAME</Text></Box>
-                <Box width={25}><Text bold dimColor>IMAGE</Text></Box>
-                <Box width={10}><Text bold dimColor>STATE</Text></Box>
-                <Box><Text bold dimColor>STATUS</Text></Box>
-              </Box>
-              
-              {dockerStatus.containers.map((container, i) => {
-                const isSelected = i === selectedIndex;
-                return (
-                  <Box key={container.id}>
-                    <Box width={3}>
-                      <Text color={isSelected ? 'cyan' : undefined}>
-                        {isSelected ? '❯ ' : '  '}
-                      </Text>
-                    </Box>
-                    <Box width={20}>
-                      <Text bold={isSelected}>{truncate(container.name, 18)}</Text>
-                    </Box>
-                    <Box width={25}>
-                      <Text>{truncate(container.image, 23)}</Text>
-                    </Box>
-                    <Box width={10}>
-                      <Text color={getContainerStatusColor(container.state)}>
-                        {container.state}
-                      </Text>
-                    </Box>
-                    <Box>
-                      <Text dimColor>{container.status}</Text>
-                    </Box>
-                  </Box>
-                );
-              })}
-            </>
+            <span fg="#888888">[Containers]</span>
           )}
-        </Box>
-      )}
-
-      {/* Image List */}
-      {view === 'images' && (
-        <Box flexDirection="column">
-          {dockerStatus.images.length === 0 ? (
-            <Text dimColor>No images found.</Text>
+        </text>
+        <text> </text>
+        <text>
+          {view === 'images' ? (
+            <strong><span fg="#00ffff">[Images]</span></strong>
           ) : (
-            <>
-              {/* Header */}
-              <Box>
-                <Box width={3}><Text dimColor> </Text></Box>
-                <Box width={30}><Text bold dimColor>REPOSITORY</Text></Box>
-                <Box width={15}><Text bold dimColor>TAG</Text></Box>
-                <Box><Text bold dimColor>SIZE</Text></Box>
-              </Box>
-              
-              {dockerStatus.images.map((image, i) => {
-                const isSelected = i === selectedIndex;
-                return (
-                  <Box key={image.id}>
-                    <Box width={3}>
-                      <Text color={isSelected ? 'cyan' : undefined}>
-                        {isSelected ? '❯ ' : '  '}
-                      </Text>
-                    </Box>
-                    <Box width={30}>
-                      <Text bold={isSelected}>{truncate(image.repository, 28)}</Text>
-                    </Box>
-                    <Box width={15}>
-                      <Text>{truncate(image.tag, 13)}</Text>
-                    </Box>
-                    <Box>
-                      <Text dimColor>{formatBytes(image.size)}</Text>
-                    </Box>
-                  </Box>
-                );
-              })}
-            </>
+            <span fg="#888888">[Images]</span>
           )}
-        </Box>
-      )}
+        </text>
+        <text><span fg="#888888"> (Tab to switch)</span></text>
+      </box>
+
+      {/* Content */}
+      <box flexDirection="column" flexGrow={1}>
+        {currentList.length === 0 ? (
+          <text><span fg="#888888">No {view} found.</span></text>
+        ) : view === 'containers' ? (
+          <>
+            {/* Container Header */}
+            <box>
+              <box width={3}><text> </text></box>
+              <box width={15}><text><strong><span fg="#888888">NAME</span></strong></text></box>
+              <box width={20}><text><strong><span fg="#888888">IMAGE</span></strong></text></box>
+              <box width={10}><text><strong><span fg="#888888">STATE</span></strong></text></box>
+              <box><text><strong><span fg="#888888">STATUS</span></strong></text></box>
+            </box>
+            
+            {containers.map((container, i) => {
+              const isSelected = i === selectedIndex;
+              const stateColor = container.state === 'running' ? '#00ff00' : 
+                               container.state === 'paused' ? '#ffff00' : '#ff0000';
+              
+              return (
+                <box key={container.id}>
+                  <box width={3}>
+                    <text><span fg={isSelected ? '#00ffff' : undefined}>{isSelected ? '❯ ' : '  '}</span></text>
+                  </box>
+                  <box width={15}>
+                    <text>{isSelected ? <strong>{container.name.slice(0, 13)}</strong> : container.name.slice(0, 13)}</text>
+                  </box>
+                  <box width={20}>
+                    <text><span fg="#888888">{container.image.slice(0, 18)}</span></text>
+                  </box>
+                  <box width={10}>
+                    <text><span fg={stateColor}>{container.state}</span></text>
+                    {actionLoading === container.id && <Spinner color="#ffff00" />}
+                  </box>
+                  <box>
+                    <text><span fg="#888888">{container.status.slice(0, 20)}</span></text>
+                  </box>
+                </box>
+              );
+            })}
+          </>
+        ) : (
+          <>
+            {/* Image Header */}
+            <box>
+              <box width={3}><text> </text></box>
+              <box width={25}><text><strong><span fg="#888888">REPOSITORY</span></strong></text></box>
+              <box width={15}><text><strong><span fg="#888888">TAG</span></strong></text></box>
+              <box><text><strong><span fg="#888888">SIZE</span></strong></text></box>
+            </box>
+            
+            {images.map((image, i) => {
+              const isSelected = i === selectedIndex;
+              
+              return (
+                <box key={image.id}>
+                  <box width={3}>
+                    <text><span fg={isSelected ? '#00ffff' : undefined}>{isSelected ? '❯ ' : '  '}</span></text>
+                  </box>
+                  <box width={25}>
+                    <text>{isSelected ? <strong>{image.repository.slice(0, 23)}</strong> : image.repository.slice(0, 23)}</text>
+                  </box>
+                  <box width={15}>
+                    <text><span fg="#888888">{image.tag.slice(0, 13)}</span></text>
+                  </box>
+                  <box>
+                    <text><span fg="#888888">{formatBytes(image.size)}</span></text>
+                  </box>
+                </box>
+              );
+            })}
+          </>
+        )}
+      </box>
 
       {/* Help */}
-      <Box marginTop={1}>
-        <Text dimColor>
-          ↑↓: Navigate | Tab: Switch view | r: Refresh
-          {view === 'containers' && ' | s: Start/Stop'}
-        </Text>
-        {actionInProgress && (
-          <Text color="yellow">
-            {' '}<Spinner type="dots" /> Processing...
-          </Text>
-        )}
-      </Box>
-    </Box>
+      <box marginTop={1}>
+        <text>
+          <span fg="#888888">
+            ↑↓: Navigate | Tab: Switch view | {view === 'containers' ? 's: Start/Stop | ' : ''}r: Refresh
+          </span>
+        </text>
+      </box>
+    </box>
   );
 }
