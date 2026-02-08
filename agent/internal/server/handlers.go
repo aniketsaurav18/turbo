@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/aniket/servertui/agent/internal/docker"
@@ -43,32 +44,41 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 // handleHealth handles the health check endpoint.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	log.Println("[HANDLER] Health check requested")
 	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
 // handleSystemInfo handles the system info endpoint.
 func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
+	log.Println("[HANDLER] System info requested")
 	info, err := s.metricsCollector.GetSystemInfo()
 	if err != nil {
+		log.Printf("[ERROR] Failed to get system info: %v", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("[HANDLER] System info: hostname=%s, os=%s", info.Hostname, info.OS)
 	writeJSON(w, http.StatusOK, info)
 }
 
 // handleMetrics handles the metrics endpoint.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	log.Println("[HANDLER] Metrics requested")
 	m, err := s.metricsCollector.GetMetrics()
 	if err != nil {
+		log.Printf("[ERROR] Failed to get metrics: %v", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("[HANDLER] Metrics collected: CPU=%.2f%%, Memory=%.2f%%", m.CPU.UsagePercent, m.Memory.UsagePercent)
 	writeJSON(w, http.StatusOK, m)
 }
 
 // handleDocker handles the Docker status endpoint.
 func (s *Server) handleDocker(w http.ResponseWriter, r *http.Request) {
+	log.Println("[HANDLER] Docker status requested")
 	if s.dockerManager == nil {
+		log.Println("[HANDLER] Docker not available, returning empty status")
 		writeJSON(w, http.StatusOK, docker.Status{
 			Installed:  false,
 			Containers: []docker.Container{},
@@ -79,9 +89,11 @@ func (s *Server) handleDocker(w http.ResponseWriter, r *http.Request) {
 
 	status, err := s.dockerManager.GetStatus(r.Context())
 	if err != nil {
+		log.Printf("[ERROR] Failed to get Docker status: %v", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("[HANDLER] Docker status: %d containers, %d images", len(status.Containers), len(status.Images))
 	writeJSON(w, http.StatusOK, status)
 }
 
@@ -123,11 +135,14 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdates handles the updates endpoint.
 func (s *Server) handleUpdates(w http.ResponseWriter, r *http.Request) {
+	log.Println("[HANDLER] Updates check requested")
 	pkgs, err := s.updatesManager.GetUpdates(r.Context())
 	if err != nil {
+		log.Printf("[ERROR] Failed to get updates: %v", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("[HANDLER] Found %d available updates", len(pkgs))
 	writeJSON(w, http.StatusOK, pkgs)
 }
 

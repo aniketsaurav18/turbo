@@ -26,16 +26,19 @@ var upgrader = websocket.Upgrader{
 
 // handleMetricsWS handles the WebSocket connection for streaming metrics.
 func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[WS] WebSocket connection attempt from: %s", r.RemoteAddr)
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade failed: %v", err)
+		log.Printf("[WS] WebSocket upgrade failed: %v", err)
 		return
 	}
 	defer conn.Close()
 
-	log.Printf("WebSocket client connected: %s", r.RemoteAddr)
+	log.Printf("[WS] WebSocket client connected: %s", r.RemoteAddr)
 
 	// Create a ticker for sending metrics at the configured interval
+	log.Printf("[WS] Metrics interval: %v", s.config.MetricsInterval)
 	ticker := time.NewTicker(s.config.MetricsInterval)
 	defer ticker.Stop()
 
@@ -49,7 +52,7 @@ func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
 			_, _, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("WebSocket read error: %v", err)
+					log.Printf("[WS] WebSocket read error: %v", err)
 				}
 				return
 			}
@@ -57,17 +60,23 @@ func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Send initial metrics immediately
-	s.sendMetrics(conn)
+	log.Println("[WS] Sending initial metrics...")
+	if err := s.sendMetrics(conn); err != nil {
+		log.Printf("[WS] Failed to send initial metrics: %v", err)
+		return
+	}
+	log.Println("[WS] Initial metrics sent successfully")
 
 	// Main loop: send metrics on each tick
 	for {
 		select {
 		case <-done:
-			log.Printf("WebSocket client disconnected: %s", r.RemoteAddr)
+			log.Printf("[WS] WebSocket client disconnected: %s", r.RemoteAddr)
 			return
 		case <-ticker.C:
+			log.Println("[WS] Ticker: sending metrics...")
 			if err := s.sendMetrics(conn); err != nil {
-				log.Printf("Failed to send metrics: %v", err)
+				log.Printf("[WS] Failed to send metrics: %v", err)
 				return
 			}
 		}
@@ -76,11 +85,14 @@ func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
 
 // sendMetrics collects and sends current metrics over the WebSocket.
 func (s *Server) sendMetrics(conn *websocket.Conn) error {
+	log.Println("[WS] Collecting metrics...")
 	m, err := s.metricsCollector.GetMetrics()
 	if err != nil {
-		log.Printf("Failed to collect metrics: %v", err)
+		log.Printf("[WS] Failed to collect metrics: %v", err)
 		return err
 	}
+
+	log.Printf("[WS] Metrics collected: CPU=%.2f%%, Mem=%.2f%%", m.CPU.UsagePercent, m.Memory.UsagePercent)
 
 	msg := AgentMessage{
 		Type:      "metrics",
@@ -90,8 +102,10 @@ func (s *Server) sendMetrics(conn *websocket.Conn) error {
 
 	data, err := json.Marshal(msg)
 	if err != nil {
+		log.Printf("[WS] Failed to marshal metrics: %v", err)
 		return err
 	}
 
+	log.Printf("[WS] Sending %d bytes of metrics data", len(data))
 	return conn.WriteMessage(websocket.TextMessage, data)
 }

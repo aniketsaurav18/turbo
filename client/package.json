@@ -27,6 +27,7 @@
   "dependencies": {
     "@opentui/core": "latest",
     "@opentui/react": "latest",
+    "clipboardy": "^5.2.1",
     "node-ssh": "^13.2.0",
     "react": ">=19.0.0",
     "ws": "^8.18.0"

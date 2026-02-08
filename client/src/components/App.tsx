@@ -9,6 +9,7 @@ import { ALL_TABS, Tab as TabEnum } from '../types/types.js';
 import { getAllServers, initDatabase } from '../db/database.js';
 import { disconnectAllSSH } from '../utils/ssh.js';
 import { logger } from '../utils/logger.js';
+import clipboardy from 'clipboardy';
 
 // Components
 import { ServerList } from './ServerList.js';
@@ -133,6 +134,34 @@ export function App() {
     setView('serverList');
   };
 
+  const handleMouseUp = () => {
+    logger.debug('handleMouseUp triggered');
+    try {
+      const selection = renderer.getSelection();
+      logger.debug('Selection object', { hasSelection: !!selection });
+      
+      if (selection) {
+        const text = selection.getSelectedText();
+        logger.debug('Selected text', { textLength: text?.length ?? 0, textPreview: text?.slice(0, 50) });
+        if (text) {
+          clipboardy.write(text)
+            .then(() => {
+              logger.info('Successfully copied text to clipboard', { length: text.length });
+            })
+            .catch(err => {
+              logger.error('Failed to write to clipboard', { error: err instanceof Error ? err.message : String(err) });
+            });
+        } else {
+          logger.debug('No text in selection');
+        }
+      } else {
+        logger.debug('No selection found');
+      }
+    } catch (error) {
+       logger.error('Error handling mouse up for clipboard', { error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
   // Render current tab content
   const renderTabContent = () => {
     if (!selectedServer) return null;
@@ -158,7 +187,11 @@ export function App() {
   };
 
   return (
-    <box flexDirection="column" height="100%">
+    <box 
+      flexDirection="column" 
+      height="100%"
+      onMouseUp={handleMouseUp}
+    >
       {/* Header */}
       <box borderStyle="rounded" borderColor="cyan" paddingLeft={1} paddingRight={1} width="100%" flexDirection="row">
         <text>

@@ -40,6 +40,7 @@ export function initDatabase(): Database {
       host TEXT NOT NULL,
       port INTEGER NOT NULL DEFAULT 22,
       username TEXT NOT NULL,
+      password TEXT,             -- New field
       private_key_path TEXT NOT NULL,
       agent_port INTEGER NOT NULL DEFAULT 8443,
       created_at TEXT NOT NULL,
@@ -64,6 +65,20 @@ export function initDatabase(): Database {
     CREATE INDEX IF NOT EXISTS idx_logs_server_id ON logs(server_id);
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp DESC);
   `);
+
+  // Check if we need to migrate existing tables (primitive migration check)
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(servers)").all() as {name: string}[];
+    const hasPassword = tableInfo.some(col => col.name === 'password');
+    
+    if (!hasPassword) {
+      logger.info('Migrating database: Adding password column to servers table');
+      db.exec('ALTER TABLE servers ADD COLUMN password TEXT');
+    }
+  } catch (err) {
+    logger.error('Failed to check/migrate database schema', { error: err });
+  }
+
   logger.info('Database initialized', { path: DB_PATH });
 
   return db;
@@ -100,6 +115,7 @@ interface ServerRow {
   host: string;
   port: number;
   username: string;
+  password?: string | null;
   private_key_path: string;
   agent_port: number;
   created_at: string;
@@ -112,7 +128,7 @@ interface ServerRow {
 export function getAllServers(): Server[] {
   const db = getDatabase();
   const stmt = db.prepare(`
-    SELECT id, name, host, port, username, private_key_path, agent_port, 
+    SELECT id, name, host, port, username, password, private_key_path, agent_port, 
            created_at, last_connected
     FROM servers
     ORDER BY name ASC
@@ -125,6 +141,7 @@ export function getAllServers(): Server[] {
     host: row.host,
     port: row.port,
     username: row.username,
+    password: row.password || undefined,
     privateKeyPath: row.private_key_path,
     agentPort: row.agent_port,
     createdAt: new Date(row.created_at),
@@ -138,7 +155,7 @@ export function getAllServers(): Server[] {
 export function getServerById(id: string): Server | undefined {
   const db = getDatabase();
   const stmt = db.prepare(`
-    SELECT id, name, host, port, username, private_key_path, agent_port,
+    SELECT id, name, host, port, username, password, private_key_path, agent_port,
            created_at, last_connected
     FROM servers WHERE id = ?
   `);
@@ -152,6 +169,7 @@ export function getServerById(id: string): Server | undefined {
     host: row.host,
     port: row.port,
     username: row.username,
+    password: row.password || undefined,
     privateKeyPath: row.private_key_path,
     agentPort: row.agent_port,
     createdAt: new Date(row.created_at),
@@ -168,10 +186,21 @@ export function addServer(server: Omit<Server, 'id' | 'createdAt' | 'lastConnect
   const createdAt = new Date().toISOString();
 
   const stmt = db.prepare(`
-    INSERT INTO servers (id, name, host, port, username, private_key_path, agent_port, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO servers (id, name, host, port, username, password, private_key_path, agent_port, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  stmt.run(id, server.name, server.host, server.port, server.username, server.privateKeyPath, server.agentPort, createdAt);
+  stmt.run(
+    id, 
+    server.name, 
+    server.host, 
+    server.port, 
+    server.username, 
+    server.password || null,
+    server.privateKeyPath, 
+    server.agentPort, 
+    createdAt
+  );
+  
   logger.info('Added new server', { id, name: server.name, host: server.host });
 
   return {
@@ -187,7 +216,7 @@ export function addServer(server: Omit<Server, 'id' | 'createdAt' | 'lastConnect
 export function updateServer(id: string, updates: Partial<Omit<Server, 'id' | 'createdAt'>>): void {
   const db = getDatabase();
   const fields: string[] = [];
-  const values: (string | number)[] = [];
+  const values: (string | number | null)[] = [];
 
   if (updates.name !== undefined) {
     fields.push('name = ?');
@@ -204,6 +233,10 @@ export function updateServer(id: string, updates: Partial<Omit<Server, 'id' | 'c
   if (updates.username !== undefined) {
     fields.push('username = ?');
     values.push(updates.username);
+  }
+  if (updates.password !== undefined) {
+    fields.push('password = ?');
+    values.push(updates.password || null);
   }
   if (updates.privateKeyPath !== undefined) {
     fields.push('private_key_path = ?');
@@ -223,6 +256,7 @@ export function updateServer(id: string, updates: Partial<Omit<Server, 'id' | 'c
     const stmt = db.prepare(`UPDATE servers SET ${fields.join(', ')} WHERE id = ?`);
     const result = stmt.run(...values);
     if (result.changes > 0) {
+      // Don't log passwords in fields list if we were doing deep logging, but keys are safe
       logger.info('Updated server', { id, fields: fields.map(f => f.split(' ')[0]) });
     } else {
       logger.warn('Attempted to update non-existent server or no changes made', { id, updates });

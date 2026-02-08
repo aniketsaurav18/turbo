@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -37,6 +38,7 @@ const (
 	DistroRHEL    Distro = "rhel"
 	DistroCentOS  Distro = "centos"
 	DistroFedora  Distro = "fedora"
+	DistroAlpine  Distro = "alpine"
 	DistroUnknown Distro = "unknown"
 )
 
@@ -59,36 +61,48 @@ func (m *Manager) GetDistro() Distro {
 
 // GetUpdates retrieves available package updates.
 func (m *Manager) GetUpdates(ctx context.Context) ([]PackageUpdate, error) {
+	log.Printf("[UPDATES] GetUpdates called, distro=%s", m.distro)
 	switch m.distro {
 	case DistroDebian, DistroUbuntu:
 		return m.getAptUpdates(ctx)
 	case DistroRHEL, DistroCentOS, DistroFedora:
 		return m.getYumUpdates(ctx)
+	case DistroAlpine:
+		return m.getApkUpdates(ctx)
 	default:
+		log.Printf("[ERROR] Unsupported distribution: %s", m.distro)
 		return nil, fmt.Errorf("unsupported distribution: %s", m.distro)
 	}
 }
 
 // ApplyUpdate installs a specific package update.
 func (m *Manager) ApplyUpdate(ctx context.Context, packageName string) (*CommandResult, error) {
+	log.Printf("[UPDATES] ApplyUpdate called, package=%s, distro=%s", packageName, m.distro)
 	switch m.distro {
 	case DistroDebian, DistroUbuntu:
 		return executeCommand(ctx, "apt-get", "install", "-y", packageName)
 	case DistroRHEL, DistroCentOS, DistroFedora:
 		return executeCommand(ctx, "yum", "update", "-y", packageName)
+	case DistroAlpine:
+		return executeCommand(ctx, "apk", "add", "--upgrade", packageName)
 	default:
+		log.Printf("[ERROR] Unsupported distribution: %s", m.distro)
 		return nil, fmt.Errorf("unsupported distribution: %s", m.distro)
 	}
 }
 
 // ApplyAllUpdates installs all available updates.
 func (m *Manager) ApplyAllUpdates(ctx context.Context) (*CommandResult, error) {
+	log.Printf("[UPDATES] ApplyAllUpdates called, distro=%s", m.distro)
 	switch m.distro {
 	case DistroDebian, DistroUbuntu:
 		return executeCommand(ctx, "apt-get", "upgrade", "-y")
 	case DistroRHEL, DistroCentOS, DistroFedora:
 		return executeCommand(ctx, "yum", "update", "-y")
+	case DistroAlpine:
+		return executeCommand(ctx, "apk", "upgrade")
 	default:
+		log.Printf("[ERROR] Unsupported distribution: %s", m.distro)
 		return nil, fmt.Errorf("unsupported distribution: %s", m.distro)
 	}
 }
@@ -122,6 +136,27 @@ func (m *Manager) getYumUpdates(ctx context.Context) ([]PackageUpdate, error) {
 	}
 
 	return parseYumOutput(result.Stdout), nil
+}
+
+func (m *Manager) getApkUpdates(ctx context.Context) ([]PackageUpdate, error) {
+	log.Println("[UPDATES] Fetching Alpine apk updates")
+
+	// First update package cache
+	_, err := executeCommand(ctx, "apk", "update")
+	if err != nil {
+		log.Printf("[ERROR] Failed to update apk cache: %v", err)
+		return nil, fmt.Errorf("failed to update apk cache: %w", err)
+	}
+
+	// Get list of upgradable packages
+	result, err := executeCommand(ctx, "apk", "list", "--upgradable")
+	if err != nil {
+		log.Printf("[ERROR] Failed to list upgradable packages: %v", err)
+		return nil, err
+	}
+
+	log.Printf("[UPDATES] apk list --upgradable output: %s", result.Stdout)
+	return parseApkOutput(result.Stdout), nil
 }
 
 // parseAptOutput parses the output of apt list --upgradable.
@@ -186,6 +221,61 @@ func parseYumOutput(output string) []PackageUpdate {
 	return updates
 }
 
+// parseApkOutput parses the output of apk list --upgradable.
+// Format: package-version {repository} [flags] - description
+func parseApkOutput(output string) []PackageUpdate {
+	var updates []PackageUpdate
+	scanner := bufio.NewScanner(strings.NewReader(output))
+
+	// Pattern: package-newversion upgradable from: package-oldversion
+	// Example: busybox-1.35.0-r3 upgradable from: busybox-1.34.1-r5
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		// Try to parse "package-version upgradable from: package-oldversion"
+		if strings.Contains(line, "upgradable from:") {
+			parts := strings.Split(line, " upgradable from: ")
+			if len(parts) == 2 {
+				newPkg := strings.TrimSpace(parts[0])
+				oldPkg := strings.TrimSpace(parts[1])
+
+				// Extract package name and version from package-version format
+				name, newVersion := splitPackageVersion(newPkg)
+				_, oldVersion := splitPackageVersion(oldPkg)
+
+				if name != "" {
+					updates = append(updates, PackageUpdate{
+						Name:           name,
+						NewVersion:     newVersion,
+						CurrentVersion: oldVersion,
+					})
+				}
+			}
+		}
+	}
+
+	log.Printf("[UPDATES] Parsed %d Alpine packages for upgrade", len(updates))
+	return updates
+}
+
+// splitPackageVersion splits "package-version" into name and version.
+// Alpine packages use format like: busybox-1.35.0-r3
+func splitPackageVersion(pkgVersion string) (name, version string) {
+	// Find the last hyphen followed by a digit (version start)
+	for i := len(pkgVersion) - 1; i >= 0; i-- {
+		if pkgVersion[i] == '-' && i+1 < len(pkgVersion) {
+			nextChar := pkgVersion[i+1]
+			if nextChar >= '0' && nextChar <= '9' {
+				return pkgVersion[:i], pkgVersion[i+1:]
+			}
+		}
+	}
+	return pkgVersion, ""
+}
+
 func executeCommand(ctx context.Context, name string, args ...string) (*CommandResult, error) {
 	start := time.Now()
 
@@ -213,25 +303,56 @@ func executeCommand(ctx context.Context, name string, args ...string) (*CommandR
 }
 
 func detectDistro() Distro {
+	// Try reading /etc/os-release first
 	data, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return DistroUnknown
+	if err == nil {
+		content := strings.ToLower(string(data))
+		log.Printf("[UPDATES] /etc/os-release content: %s", strings.ReplaceAll(content, "\n", " | "))
+
+		switch {
+		case strings.Contains(content, "alpine"):
+			log.Println("[UPDATES] Detected Alpine Linux")
+			return DistroAlpine
+		case strings.Contains(content, "ubuntu"):
+			log.Println("[UPDATES] Detected Ubuntu")
+			return DistroUbuntu
+		case strings.Contains(content, "debian"):
+			log.Println("[UPDATES] Detected Debian")
+			return DistroDebian
+		case strings.Contains(content, "centos"):
+			log.Println("[UPDATES] Detected CentOS")
+			return DistroCentOS
+		case strings.Contains(content, "rhel"), strings.Contains(content, "red hat"):
+			log.Println("[UPDATES] Detected RHEL")
+			return DistroRHEL
+		case strings.Contains(content, "fedora"):
+			log.Println("[UPDATES] Detected Fedora")
+			return DistroFedora
+		}
+	} else {
+		log.Printf("[UPDATES] Could not read /etc/os-release: %v", err)
 	}
 
-	content := strings.ToLower(string(data))
+	// Fallback: detect by checking which package manager binary exists
+	log.Println("[UPDATES] Falling back to package manager binary detection")
 
-	switch {
-	case strings.Contains(content, "ubuntu"):
-		return DistroUbuntu
-	case strings.Contains(content, "debian"):
+	if _, err := exec.LookPath("apk"); err == nil {
+		log.Println("[UPDATES] Found apk - assuming Alpine")
+		return DistroAlpine
+	}
+	if _, err := exec.LookPath("apt-get"); err == nil {
+		log.Println("[UPDATES] Found apt-get - assuming Debian/Ubuntu")
 		return DistroDebian
-	case strings.Contains(content, "centos"):
-		return DistroCentOS
-	case strings.Contains(content, "rhel"), strings.Contains(content, "red hat"):
-		return DistroRHEL
-	case strings.Contains(content, "fedora"):
-		return DistroFedora
-	default:
-		return DistroUnknown
 	}
+	if _, err := exec.LookPath("yum"); err == nil {
+		log.Println("[UPDATES] Found yum - assuming RHEL/CentOS")
+		return DistroRHEL
+	}
+	if _, err := exec.LookPath("dnf"); err == nil {
+		log.Println("[UPDATES] Found dnf - assuming Fedora")
+		return DistroFedora
+	}
+
+	log.Println("[UPDATES] Could not detect distribution")
+	return DistroUnknown
 }

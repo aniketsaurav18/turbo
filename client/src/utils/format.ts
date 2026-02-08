@@ -42,6 +42,13 @@ export function formatPercent(value: number, decimals = 1): string {
  * Create an ASCII progress bar
  */
 export function progressBar(percent: number, width = 20): string {
+  // Handle edge cases: NaN, Infinity, negative values
+  if (!Number.isFinite(percent) || percent < 0) {
+    percent = 0;
+  } else if (percent > 100) {
+    percent = 100;
+  }
+  
   const filled = Math.round((percent / 100) * width);
   const empty = width - filled;
   return `[${'█'.repeat(filled)}${'░'.repeat(empty)}]`;

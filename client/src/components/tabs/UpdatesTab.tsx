@@ -39,12 +39,16 @@ export function UpdatesTab({ server }: UpdatesTabProps) {
   const loadUpdates = async () => {
     setLoading(true);
     setError(null);
+    logger.info('Loading updates', { serverId: server.id });
 
     try {
       // Try agent first
+      logger.debug('Trying agent for updates', { serverId: server.id });
       const agentUpdates = await getAgentUpdates(server);
+      logger.info('Got updates from agent', { serverId: server.id, count: agentUpdates.length });
       setUpdates(agentUpdates);
-    } catch {
+    } catch (agentErr) {
+      logger.warn('Agent failed, falling back to SSH', { serverId: server.id, error: agentErr instanceof Error ? agentErr.message : String(agentErr) });
       // Fallback to SSH
       try {
         const detectedDistro = await detectDistro();

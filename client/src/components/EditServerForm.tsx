@@ -20,6 +20,7 @@ interface FormField {
   key: keyof typeof defaultValues;
   label: string;
   required: boolean;
+  type?: 'text' | 'password';
 }
 
 const defaultValues = {
@@ -27,6 +28,7 @@ const defaultValues = {
   host: '',
   port: '',
   username: '',
+  password: '',
   privateKeyPath: '',
   agentPort: '',
 };
@@ -36,7 +38,8 @@ const FIELDS: FormField[] = [
   { key: 'host', label: 'Host/IP', required: true },
   { key: 'port', label: 'SSH Port', required: false },
   { key: 'username', label: 'Username', required: true },
-  { key: 'privateKeyPath', label: 'Private Key', required: true },
+  { key: 'password', label: 'Password', required: false, type: 'password' },
+  { key: 'privateKeyPath', label: 'Private Key', required: false },
   { key: 'agentPort', label: 'Agent Port', required: false },
 ];
 
@@ -46,6 +49,7 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
     host: server.host,
     port: String(server.port),
     username: server.username,
+    password: server.password || '',
     privateKeyPath: server.privateKeyPath,
     agentPort: String(server.agentPort),
   });
@@ -60,18 +64,18 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
     }
 
     if (key.name === 'up') {
-      setCurrentField((i: number) => Math.max(0, i - 1));
+      setCurrentField((i: number) => (i - 1 + FIELDS.length) % FIELDS.length);
       setError(null);
     }
 
-    if (key.name === 'down') {
-      setCurrentField((i: number) => Math.min(FIELDS.length - 1, i + 1));
+    if (key.name === 'down' || key.name === 'tab') {
+      setCurrentField((i: number) => (i + 1) % FIELDS.length);
       setError(null);
     }
 
-    if (key.name === 'enter' && currentField === FIELDS.length - 1) {
+    if (key.name === 'return' && currentField === FIELDS.length - 1) {
       handleSubmit();
-    } else if (key.name === 'enter') {
+    } else if (key.name === 'return') {
       setCurrentField((i: number) => Math.min(FIELDS.length - 1, i + 1));
     }
 
@@ -91,6 +95,12 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
       }
     }
 
+    // Ensure at least authentication method is provided
+    if (!values.password?.trim() && !values.privateKeyPath?.trim()) {
+      setError('Either Password or Private Key is required');
+      return;
+    }
+
     // Expand ~ in path
     let keyPath = values.privateKeyPath ?? '';
     if (keyPath.startsWith('~')) {
@@ -104,7 +114,8 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
         host: values.host!.trim(),
         port: parseInt(values.port ?? '22', 10) || 22,
         username: values.username!.trim(),
-        privateKeyPath: keyPath,
+        password: values.password?.trim() || undefined,
+        privateKeyPath: keyPath.trim(),
         agentPort: parseInt(values.agentPort ?? '8443', 10) || 8443,
       });
       onSubmit();
@@ -135,7 +146,7 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
           const value = values[field.key] ?? '';
           
           return (
-            <box key={field.key} marginBottom={index === FIELDS.length - 1 ? 0 : 1}>
+            <box key={field.key} flexDirection="row" marginBottom={index === FIELDS.length - 1 ? 0 : 1}>
               <box width={16}>
                 <text>
                   <span fg={isActive ? '#00ffff' : '#888888'}>
@@ -151,11 +162,12 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
                     onChange={(v: string) => handleChange(v)}
                     focused
                     width={30}
+
                   />
                 ) : (
                   <text>
                     <span fg={value ? '#ffffff' : '#888888'}>
-                      {value || '(empty)'}
+                      {field.type === 'password' && value ? '*'.repeat(value.length) : (value || '(empty)')}
                     </span>
                   </text>
                 )}
@@ -184,3 +196,5 @@ export function EditServerForm({ server, onSubmit, onCancel }: EditServerFormPro
     </box>
   );
 }
+
+

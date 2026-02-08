@@ -31,10 +31,11 @@ export async function connectSSH(server: Server): Promise<NodeSSH> {
     keyPath: server.privateKeyPath,
     hasAgent: !!agentSocket,
     agentSocket,
+    hasPassword: !!server.password,
   });
   
-  // Try agent-only auth first if SSH agent is available
-  if (agentSocket) {
+  // Try agent-only auth first if SSH agent is available AND user provided a key path
+  if (agentSocket && server.privateKeyPath) {
     try {
       logger.debug('Trying SSH agent authentication');
       await ssh.connect({
@@ -59,30 +60,67 @@ export async function connectSSH(server: Server): Promise<NodeSSH> {
   }
   
   // Fall back to private key file
-  try {
-    logger.debug('Trying private key file authentication');
-    await ssh.connect({
-      host: server.host,
-      port: server.port,
-      username: server.username,
-      privateKeyPath: server.privateKeyPath,
-      readyTimeout: 10000,
-    });
+  if (server.privateKeyPath) {
+    try {
+      logger.debug('Trying private key file authentication');
+      await ssh.connect({
+        host: server.host,
+        port: server.port,
+        username: server.username,
+        privateKeyPath: server.privateKeyPath,
+        readyTimeout: 10000,
+      });
 
-    connections.set(server.id, ssh);
-    updateLastConnected(server.id);
-    
-    logger.info('SSH connected via key file', { host: server.host });
-    addLogEntry(server.id, 'info', `SSH connected to ${server.host}`);
-    
-    return ssh;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    const stack = error instanceof Error ? error.stack : undefined;
-    logger.error('SSH connection failed', { host: server.host, error: message, stack });
-    addLogEntry(server.id, 'error', `SSH connection failed: ${message}`);
-    throw error;
+      connections.set(server.id, ssh);
+      updateLastConnected(server.id);
+      
+      logger.info('SSH connected via key file', { host: server.host });
+      addLogEntry(server.id, 'info', `SSH connected to ${server.host}`);
+      
+      return ssh;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      logger.warn('Private key auth failed, trying password if available', { error: message });
+    }
   }
+
+  // Fallback to password
+  if (server.password) {
+    try {
+      logger.debug('Trying password authentication');
+      await ssh.connect({
+        host: server.host,
+        port: server.port,
+        username: server.username,
+        password: server.password,
+        readyTimeout: 10000,
+        // When using password, we might face interactive prompts if not careful, but node-ssh handles simple password auth well.
+        // We set tryKeyboard: true to handle keyboard-interactive auth which sometimes wraps password auth.
+        tryKeyboard: true,
+      });
+
+      connections.set(server.id, ssh);
+      updateLastConnected(server.id);
+      
+      logger.info('SSH connected via password', { host: server.host });
+      addLogEntry(server.id, 'info', `SSH connected to ${server.host} via password`);
+      
+      return ssh;
+    } catch (error) {
+       const message = error instanceof Error ? error.message : 'Unknown error';
+       logger.warn('Password auth failed', { error: message });
+       // We'll throw the final error if this was our last resort
+       if (!agentSocket && !server.privateKeyPath) { // Logic check is a bit complex here bc of fallbacks, but basically if this fails we are done
+          throw error;
+       }
+    }
+  }
+
+  // If we reach here, no connection was established
+  const error = new Error('All authentication methods failed');
+  logger.error('SSH connection failed', { host: server.host, error: error.message });
+  addLogEntry(server.id, 'error', `SSH connection failed: All methods failed`);
+  throw error;
 }
 
 /**

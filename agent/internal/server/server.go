@@ -2,9 +2,11 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -48,6 +50,8 @@ func New(cfg *config.Config) *Server {
 
 // setupRoutes configures all HTTP routes.
 func (s *Server) setupRoutes() {
+	// Logging middleware for all routes
+	s.router.Use(loggingMiddleware)
 	// CORS middleware for all routes
 	s.router.Use(corsMiddleware)
 
@@ -70,7 +74,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/ws/metrics", s.handleMetricsWS)
 }
 
-// Start starts the HTTPS server.
+// Start starts the HTTP server.
 func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 
@@ -82,8 +86,8 @@ func (s *Server) Start() error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	log.Printf("Starting agent server on %s with TLS", addr)
-	return s.httpServer.ListenAndServeTLS(s.config.TLSCertPath, s.config.TLSKeyPath)
+	log.Printf("Starting agent server on %s (HTTP)", addr)
+	return s.httpServer.ListenAndServe()
 }
 
 // Shutdown gracefully shuts down the server.
@@ -108,4 +112,40 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loggingMiddleware logs all incoming requests.
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		log.Printf("[REQUEST] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
+		// Wrap response writer to capture status code
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(wrapped, r)
+
+		duration := time.Since(start)
+		log.Printf("[RESPONSE] %s %s -> %d (%v)", r.Method, r.URL.Path, wrapped.statusCode, duration)
+	})
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code.
+// It also implements http.Hijacker for WebSocket support.
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack implements http.Hijacker for WebSocket support.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("ResponseWriter does not implement http.Hijacker")
+	}
+	return hijacker.Hijack()
 }

@@ -33,7 +33,7 @@ export function ServerList({ servers, onSelect, onAdd, onEdit, onRefresh }: Serv
     }
 
     // Select server
-    if ((key.name === 'enter' || key.name === 'return') && servers.length > 0) {
+    if ((key.name === 'return') && servers.length > 0) {
       if (confirmDelete) {
         // Confirm deletion
         logger.info('Confirmed deletion of server', { id: confirmDelete });

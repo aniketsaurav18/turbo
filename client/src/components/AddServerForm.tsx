@@ -19,6 +19,7 @@ interface FormField {
   label: string;
   placeholder: string;
   required: boolean;
+  type?: 'text' | 'password';
 }
 
 const FIELDS: FormField[] = [
@@ -26,7 +27,8 @@ const FIELDS: FormField[] = [
   { key: 'host', label: 'Host/IP', placeholder: '192.168.1.100', required: true },
   { key: 'port', label: 'SSH Port', placeholder: '22', required: false },
   { key: 'username', label: 'Username', placeholder: 'root', required: true },
-  { key: 'privateKeyPath', label: 'Private Key', placeholder: '~/.ssh/id_rsa', required: true },
+  { key: 'password', label: 'Password', placeholder: '(optional)', required: false, type: 'password' },
+  { key: 'privateKeyPath', label: 'Private Key', placeholder: '~/.ssh/id_rsa', required: false },
   { key: 'agentPort', label: 'Agent Port', placeholder: '8443', required: false },
 ];
 
@@ -36,7 +38,8 @@ export function AddServerForm({ onSubmit, onCancel }: AddServerFormProps) {
     host: '',
     port: '22',
     username: '',
-    privateKeyPath: join(homedir(), '.ssh', 'id_rsa'),
+    password: '',
+    privateKeyPath: '',
     agentPort: '8443',
   });
   const [currentField, setCurrentField] = useState(0);
@@ -50,18 +53,18 @@ export function AddServerForm({ onSubmit, onCancel }: AddServerFormProps) {
     }
 
     if (key.name === 'up') {
-      setCurrentField(i => Math.max(0, i - 1));
+      setCurrentField(i => (i - 1 + FIELDS.length) % FIELDS.length);
       setError(null);
     }
 
-    if (key.name === 'down') {
-      setCurrentField(i => Math.min(FIELDS.length - 1, i + 1));
+    if (key.name === 'down' || key.name === 'tab') {
+      setCurrentField(i => (i + 1) % FIELDS.length);
       setError(null);
     }
 
-    if (key.name === 'enter' && currentField === FIELDS.length - 1) {
+    if (key.name === 'return' && currentField === FIELDS.length - 1) {
       handleSubmit();
-    } else if (key.name === 'enter') {
+    } else if (key.name === 'return') {
       setCurrentField(i => Math.min(FIELDS.length - 1, i + 1));
     }
 
@@ -82,6 +85,12 @@ export function AddServerForm({ onSubmit, onCancel }: AddServerFormProps) {
       }
     }
 
+    // Ensure at least authentication method is provided
+    if (!values.password?.trim() && !values.privateKeyPath?.trim()) {
+      setError('Either Password or Private Key is required');
+      return;
+    }
+
     // Expand ~ in path
     let keyPath = values.privateKeyPath ?? '';
     if (keyPath.startsWith('~')) {
@@ -95,7 +104,8 @@ export function AddServerForm({ onSubmit, onCancel }: AddServerFormProps) {
         host: values.host!.trim(),
         port: parseInt(values.port ?? '22', 10) || 22,
         username: values.username!.trim(),
-        privateKeyPath: keyPath,
+        password: values.password?.trim() || undefined,
+        privateKeyPath: keyPath.trim(),
         agentPort: parseInt(values.agentPort ?? '8443', 10) || 8443,
       });
       onSubmit();
@@ -125,7 +135,7 @@ export function AddServerForm({ onSubmit, onCancel }: AddServerFormProps) {
           const value = values[field.key] ?? '';
           
           return (
-            <box key={field.key} marginBottom={index === FIELDS.length - 1 ? 0 : 1}>
+            <box key={field.key} flexDirection="row" marginBottom={index === FIELDS.length - 1 ? 0 : 1}>
               <box width={16}>
                 <text>
                   <span fg={isActive ? '#00ffff' : '#888888'}>
@@ -142,11 +152,12 @@ export function AddServerForm({ onSubmit, onCancel }: AddServerFormProps) {
                     placeholder={field.placeholder}
                     focused
                     width={30}
+
                   />
                 ) : (
                   <text>
                     <span fg={value ? '#ffffff' : '#888888'}>
-                      {value || field.placeholder}
+                      {field.type === 'password' && value ? '*'.repeat(value.length) : (value || field.placeholder)}
                     </span>
                   </text>
                 )}

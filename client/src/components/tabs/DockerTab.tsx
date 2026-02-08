@@ -130,7 +130,7 @@ export function DockerTab({ server }: DockerTabProps) {
     }
 
     // Start/Stop container
-    if ((key.name === 's' || key.name === 'enter') && view === 'containers' && containers[selectedIndex]) {
+    if ((key.name === 's' || key.name === 'return') && view === 'containers' && containers[selectedIndex]) {
       const container = containers[selectedIndex]!;
       handleContainerAction(container);
     }

@@ -11,6 +11,7 @@ export interface Server {
   host: string;
   port: number;
   username: string;
+  password?: string;
   privateKeyPath: string;
   agentPort: number;
   createdAt: Date;
@@ -25,6 +26,7 @@ export interface ServerFormData {
   host: string;
   port: string;
   username: string;
+  password?: string;
   privateKeyPath: string;
   agentPort: string;
 }

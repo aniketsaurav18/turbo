@@ -9,8 +9,8 @@ import {
   isConnected, 
   disconnectServer, 
   getSystemInfo, 
-  getMetrics,
 } from '../utils/connection.js';
+import { connectAgentWS, disconnectAgentWS } from '../utils/agent.js';
 import { logger } from '../utils/logger.js';
 
 // =============================================================================
@@ -120,7 +120,7 @@ export function useConnection(server: Server | null): UseConnectionResult {
 }
 
 // =============================================================================
-// useMetrics Hook - Poll metrics using the single connection
+// useMetrics Hook - Stream metrics via agent WebSocket
 // =============================================================================
 
 interface UseMetricsResult {
@@ -128,59 +128,53 @@ interface UseMetricsResult {
   memory: { used: number; total: number };
   disk: { used: number; total: number };
   loading: boolean;
+  error: string | null;
 }
 
-export function useMetrics(server: Server | null, pollInterval: number = 3000): UseMetricsResult {
+export function useMetrics(server: Server | null, _pollInterval?: number): UseMetricsResult {
   const [metrics, setMetrics] = useState<UseMetricsResult>({
     cpu: 0,
     memory: { used: 0, total: 0 },
     disk: { used: 0, total: 0 },
     loading: true,
+    error: null,
   });
-  
-  // Prevent concurrent fetches
-  const fetchingRef = useRef(false);
-  const mountedRef = useRef(true);
 
   useEffect(() => {
-    mountedRef.current = true;
-    
-    if (!server || !isConnected(server.id)) {
+    if (!server) {
       return;
     }
 
-    const fetchMetrics = async () => {
-      // Skip if already fetching
-      if (fetchingRef.current) {
-        logger.debug('useMetrics: Skipping fetch, already in progress');
-        return;
-      }
-      
-      fetchingRef.current = true;
-      
-      try {
-        const data = await getMetrics(server);
-        if (mountedRef.current) {
-          setMetrics({ ...data, loading: false });
-        }
-      } catch (err) {
-        logger.debug('useMetrics: Fetch error', { error: err instanceof Error ? err.message : 'unknown' });
-      } finally {
-        fetchingRef.current = false;
-      }
-    };
+    logger.info('useMetrics: Connecting to agent WebSocket', { serverId: server.id });
 
-    // Initial fetch
-    fetchMetrics();
-
-    // Poll - but only start next poll after previous completes
-    const interval = setInterval(fetchMetrics, pollInterval);
+    const disconnect = connectAgentWS(
+      server,
+      (agentMetrics) => {
+        logger.debug('useMetrics: Received metrics from agent', { serverId: server.id });
+        setMetrics({
+          cpu: agentMetrics.cpu?.usagePercent ?? 0,
+          memory: {
+            used: agentMetrics.memory?.used ?? 0,
+            total: agentMetrics.memory?.total ?? 0,
+          },
+          disk: {
+            used: agentMetrics.disk?.used ?? 0,
+            total: agentMetrics.disk?.total ?? 0,
+          },
+          loading: false,
+          error: null,
+        });
+      },
+      (error) => {
+        logger.error('useMetrics: WebSocket error', { serverId: server.id, error: error.message });
+        setMetrics(prev => ({ ...prev, loading: false, error: error.message }));
+      }
+    );
 
     return () => {
-      mountedRef.current = false;
-      clearInterval(interval);
+      disconnect();
     };
-  }, [server?.id, pollInterval]);
+  }, [server?.id]);
 
   return metrics;
 }

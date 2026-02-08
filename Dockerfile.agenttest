@@ -1,0 +1,31 @@
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /app
+COPY agent/ .
+# Build the agent
+RUN go build -o server-agent ./cmd/main.go
+
+# Final stage: The "Fake Server"
+FROM alpine:latest
+
+# Install SSH and other tools your agent might need (like docker cli if you want to mock that too)
+RUN apk add --no-cache openssh bash curl openssl
+
+# Generate SSH host keys
+RUN ssh-keygen -A
+
+# Create a test user 'testuser' with password 'password'
+RUN adduser -D -s /bin/bash testuser && \
+    echo "testuser:password" | chpasswd
+
+# Copy the agent binary
+WORKDIR /app
+COPY --from=builder /app/server-agent .
+
+# Copy the startup script
+COPY start-test-env.sh /start.sh
+RUN chmod +x /start.sh
+
+EXPOSE 22 8443
+
+CMD ["/start.sh"]

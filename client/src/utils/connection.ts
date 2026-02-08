@@ -46,10 +46,12 @@ export async function getConnection(server: Server): Promise<NodeSSH> {
     port: server.port,
     username: server.username,
     hasAgent: !!agentSocket,
+    hasPassword: !!server.password,
+    keyPath: server.privateKeyPath,
   });
 
-  // Try agent-only auth first
-  if (agentSocket) {
+  // Try agent-only auth first if SSH agent is available AND user provided a key path
+  if (agentSocket && server.privateKeyPath) {
     try {
       await ssh.connect({
         host: server.host,
@@ -79,43 +81,80 @@ export async function getConnection(server: Server): Promise<NodeSSH> {
   }
 
   // Fall back to key file
-  try {
-    await ssh.connect({
-      host: server.host,
-      port: server.port,
-      username: server.username,
-      privateKeyPath: server.privateKeyPath,
-      readyTimeout: 10000,
-    });
+  if (server.privateKeyPath) {
+    try {
+      await ssh.connect({
+        host: server.host,
+        port: server.port,
+        username: server.username,
+        privateKeyPath: server.privateKeyPath,
+        readyTimeout: 10000,
+      });
 
-    activeConnection = {
-      ssh,
-      serverId: server.id,
-      connected: true,
-      systemInfo: null,
-      lastError: null,
-    };
+      activeConnection = {
+        ssh,
+        serverId: server.id,
+        connected: true,
+        systemInfo: null,
+        lastError: null,
+      };
 
-    updateLastConnected(server.id);
-    addLogEntry(server.id, 'info', `Connected to ${server.host}`);
-    logger.info('ConnectionManager: Connected via key file');
+      updateLastConnected(server.id);
+      addLogEntry(server.id, 'info', `Connected to ${server.host}`);
+      logger.info('ConnectionManager: Connected via key file');
 
-    return ssh;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Connection failed';
-    logger.error('ConnectionManager: Connection failed', { error: msg });
-    
-    activeConnection = {
-      ssh,
-      serverId: server.id,
-      connected: false,
-      systemInfo: null,
-      lastError: msg,
-    };
-    
-    addLogEntry(server.id, 'error', `Connection failed: ${msg}`);
-    throw err;
+      return ssh;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Connection failed';
+      logger.warn('ConnectionManager: Key file auth failed', { error: msg });
+    }
   }
+
+  // Fallback to password
+  if (server.password) {
+    try {
+      await ssh.connect({
+        host: server.host,
+        port: server.port,
+        username: server.username,
+        password: server.password,
+        tryKeyboard: true,
+        readyTimeout: 10000,
+      });
+
+      activeConnection = {
+        ssh,
+        serverId: server.id,
+        connected: true,
+        systemInfo: null,
+        lastError: null,
+      };
+
+      updateLastConnected(server.id);
+      addLogEntry(server.id, 'info', `Connected to ${server.host} via password`);
+      logger.info('ConnectionManager: Connected via password');
+
+      return ssh;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Connection failed';
+      logger.warn('ConnectionManager: Password auth failed', { error: msg });
+    }
+  }
+
+  // If we reach here, connection failed
+  const msg = 'All authentication methods failed';
+  logger.error('ConnectionManager: Connection failed', { error: msg });
+  
+  activeConnection = {
+    ssh,
+    serverId: server.id,
+    connected: false,
+    systemInfo: null,
+    lastError: msg,
+  };
+  
+  addLogEntry(server.id, 'error', `Connection failed: ${msg}`);
+  throw new Error(msg);
 }
 
 /**

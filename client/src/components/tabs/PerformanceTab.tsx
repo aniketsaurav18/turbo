@@ -14,7 +14,7 @@ interface PerformanceTabProps {
 
 export function PerformanceTab({ server }: PerformanceTabProps) {
   const { status, error } = useConnection(server);
-  const metrics = useMetrics(server, 60000); // Poll every 60 seconds
+  const metrics = useMetrics(server, 2000); // Poll every 60 seconds
 
   if (status === 'connecting') {
     return (
