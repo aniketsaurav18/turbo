@@ -8,8 +8,9 @@ RUN go build -o server-agent ./cmd/main.go
 # Final stage: The "Fake Server"
 FROM alpine:latest
 
-# Install SSH and other tools your agent might need (like docker cli if you want to mock that too)
-RUN apk add --no-cache openssh bash curl openssl
+# Install SSH, Docker CLI (from edge for newer API version), and other tools
+RUN apk add --no-cache openssh bash curl openssl && \
+    apk add --no-cache docker-cli --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community
 
 # Generate SSH host keys
 RUN ssh-keygen -A

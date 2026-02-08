@@ -127,7 +127,7 @@ export function LogsTab({ server }: LogsTabProps) {
           <text><span fg="#888888">No logs recorded for this server.</span></text>
         ) : (
           visibleLogs.map((log) => (
-            <box key={log.id}>
+            <box key={log.id} flexDirection="row">
               <box width={16}>
                 <text><span fg="#888888">{formatDateTime(log.timestamp)}</span></text>
               </box>

@@ -220,7 +220,7 @@ export function DockerTab({ server }: DockerTabProps) {
         ) : view === 'containers' ? (
           <>
             {/* Container Header */}
-            <box>
+            <box flexDirection="row">
               <box width={3}><text> </text></box>
               <box width={15}><text><strong><span fg="#888888">NAME</span></strong></text></box>
               <box width={20}><text><strong><span fg="#888888">IMAGE</span></strong></text></box>
@@ -234,7 +234,7 @@ export function DockerTab({ server }: DockerTabProps) {
                                container.state === 'paused' ? '#ffff00' : '#ff0000';
               
               return (
-                <box key={container.id}>
+                <box key={container.id} flexDirection="row">
                   <box width={3}>
                     <text><span fg={isSelected ? '#00ffff' : undefined}>{isSelected ? '❯ ' : '  '}</span></text>
                   </box>
@@ -258,7 +258,7 @@ export function DockerTab({ server }: DockerTabProps) {
         ) : (
           <>
             {/* Image Header */}
-            <box>
+            <box flexDirection="row">
               <box width={3}><text> </text></box>
               <box width={25}><text><strong><span fg="#888888">REPOSITORY</span></strong></text></box>
               <box width={15}><text><strong><span fg="#888888">TAG</span></strong></text></box>
@@ -269,7 +269,7 @@ export function DockerTab({ server }: DockerTabProps) {
               const isSelected = i === selectedIndex;
               
               return (
-                <box key={image.id}>
+                <box key={image.id} flexDirection="row">
                   <box width={3}>
                     <text><span fg={isSelected ? '#00ffff' : undefined}>{isSelected ? '❯ ' : '  '}</span></text>
                   </box>

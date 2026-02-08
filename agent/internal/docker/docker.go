@@ -47,7 +47,7 @@ type Manager struct {
 // NewManager creates a new Docker manager.
 // Returns nil if Docker is not available.
 func NewManager() (*Manager, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithVersion("1.44"))
 	if err != nil {
 		return nil, err
 	}

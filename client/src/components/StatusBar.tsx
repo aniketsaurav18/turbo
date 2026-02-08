@@ -35,6 +35,7 @@ export function StatusBar({ view, server, activeTab }: StatusBarProps) {
       paddingRight={1}
       justifyContent="space-between"
       width="100%"
+      flexDirection='row'
     >
       <box>
         <text><span fg="#888888">{getHelpText()}</span></text>

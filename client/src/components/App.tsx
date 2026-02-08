@@ -83,13 +83,35 @@ export function App() {
     }
 
     // Tab navigation with up/down arrow keys (vertical sidebar)
+    // Skip for tabs that have their own internal navigation
     if (view === 'dashboard') {
-      if (key.name === 'up') {
+      const tabsWithInternalNavigation: TabEnum[] = [
+        TabEnum.Docker, 
+        TabEnum.Updates, 
+        TabEnum.Logs,
+        TabEnum.Commands,
+      ];
+      
+      const hasInternalNav = tabsWithInternalNavigation.includes(activeTab);
+      
+      if (key.name === 'up' && !hasInternalNav) {
         const currentIndex = ALL_TABS.indexOf(activeTab);
         const newIndex = currentIndex > 0 ? currentIndex - 1 : ALL_TABS.length - 1;
         setActiveTab(ALL_TABS[newIndex]!);
       }
-      if (key.name === 'down') {
+      if (key.name === 'down' && !hasInternalNav) {
+        const currentIndex = ALL_TABS.indexOf(activeTab);
+        const newIndex = (currentIndex + 1) % ALL_TABS.length;
+        setActiveTab(ALL_TABS[newIndex]!);
+      }
+      
+      // Left/Right arrow keys ALWAYS work for tab navigation (even in tabs with internal nav)
+      if (key.name === 'left') {
+        const currentIndex = ALL_TABS.indexOf(activeTab);
+        const newIndex = currentIndex > 0 ? currentIndex - 1 : ALL_TABS.length - 1;
+        setActiveTab(ALL_TABS[newIndex]!);
+      }
+      if (key.name === 'right') {
         const currentIndex = ALL_TABS.indexOf(activeTab);
         const newIndex = (currentIndex + 1) % ALL_TABS.length;
         setActiveTab(ALL_TABS[newIndex]!);

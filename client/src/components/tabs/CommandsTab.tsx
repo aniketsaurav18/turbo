@@ -93,7 +93,7 @@ export function CommandsTab({ server }: CommandsTabProps) {
         
         {history.map((entry, i) => (
           <box key={i} flexDirection="column" marginBottom={1}>
-            <box>
+            <box flexDirection='row'>
               <text><span fg="#888888">$ </span></text>
               <text><strong>{entry.command}</strong></text>
               <text><span fg="#888888"> ({entry.result.duration}ms, exit: {entry.result.exitCode})</span></text>
@@ -110,10 +110,10 @@ export function CommandsTab({ server }: CommandsTabProps) {
 
       {/* Command Input */}
       <box flexDirection="column" border borderStyle="single" borderColor="#888888" padding={1}>
-        <box>
+        <box flexDirection='row'>
           <text><span fg="#00ffff">Command: </span></text>
           {isExecuting ? (
-            <box>
+            <box flexDirection='row'>
               <Spinner color="#ffff00" />
               <text> Executing...</text>
             </box>
