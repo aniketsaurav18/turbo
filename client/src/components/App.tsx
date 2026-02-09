@@ -7,7 +7,6 @@ import { useKeyboard, useRenderer } from '@opentui/react';
 import type { Server, Tab, AppView } from '../types/types.js';
 import { ALL_TABS, Tab as TabEnum } from '../types/types.js';
 import { getAllServers, initDatabase } from '../db/database.js';
-import { disconnectAllSSH } from '../utils/ssh.js';
 import { logger } from '../utils/logger.js';
 import clipboardy from 'clipboardy';
 
@@ -20,7 +19,6 @@ import { StatusBar } from './StatusBar.js';
 
 // Tabs
 import { OverviewTab } from './tabs/OverviewTab.js';
-import { SSHTab } from './tabs/SSHTab.js';
 import { PerformanceTab } from './tabs/PerformanceTab.js';
 import { DockerTab } from './tabs/DockerTab.js';
 import { CommandsTab } from './tabs/CommandsTab.js';
@@ -57,7 +55,6 @@ export function App() {
     // Quit on q (when in server list)
     if (key.name === 'q' && view === 'serverList') {
       logger.info('User quit application via keyboard');
-      disconnectAllSSH();
       renderer.destroy();
       return;
     }
@@ -74,8 +71,8 @@ export function App() {
       }
     }
 
-    // Tab navigation with numbers 1-7
-    if (view === 'dashboard' && /^[1-7]$/.test(key.name)) {
+    // Tab navigation with numbers 1-6
+    if (view === 'dashboard' && /^[1-6]$/.test(key.name)) {
       const tabIndex = parseInt(key.name, 10) - 1;
       if (tabIndex < ALL_TABS.length) {
         setActiveTab(ALL_TABS[tabIndex]!);
@@ -191,8 +188,6 @@ export function App() {
     switch (activeTab) {
       case TabEnum.Overview:
         return <OverviewTab server={selectedServer} />;
-      case TabEnum.SSH:
-        return <SSHTab server={selectedServer} />;
       case TabEnum.Performance:
         return <PerformanceTab server={selectedServer} />;
       case TabEnum.Docker:
@@ -215,9 +210,9 @@ export function App() {
       onMouseUp={handleMouseUp}
     >
       {/* Header */}
-      <box borderStyle="rounded" borderColor="cyan" paddingLeft={1} paddingRight={1} width="100%" flexDirection="row">
+      <box paddingLeft={1} paddingRight={1} width="100%" flexDirection="row">
         <text>
-          <strong><span fg="#00ffff">🖥️  ServerTUI</span></strong>
+          <strong><span fg="#00ffff">ServerTUI</span></strong>
         </text>
         {selectedServer && (
           <text>

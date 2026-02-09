@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/aniket/servertui/agent/internal/docker"
 	"github.com/gorilla/websocket"
 )
 
@@ -108,4 +110,139 @@ func (s *Server) sendMetrics(conn *websocket.Conn) error {
 
 	log.Printf("[WS] Sending %d bytes of metrics data", len(data))
 	return conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// ClientMessage represents a message from the client to the agent.
+type ClientMessage struct {
+	Action      string `json:"action"`
+	ContainerID string `json:"containerId,omitempty"`
+}
+
+// handleDockerLogsWS handles WebSocket connections for streaming Docker container logs.
+func (s *Server) handleDockerLogsWS(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[WS] Docker logs WebSocket connection attempt from: %s", r.RemoteAddr)
+
+	if s.dockerManager == nil {
+		log.Println("[WS] Docker not available, rejecting connection")
+		http.Error(w, "Docker not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[WS] WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	log.Printf("[WS] Docker logs client connected: %s", r.RemoteAddr)
+
+	// Read loop to handle client commands
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("[WS] WebSocket read error: %v", err)
+			} else {
+				log.Printf("[WS] Client disconnected: %s", r.RemoteAddr)
+			}
+			return
+		}
+
+		var msg ClientMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			log.Printf("[WS] Invalid message format: %v", err)
+			s.sendWSMessage(conn, "error", map[string]string{"message": "Invalid message format"})
+			continue
+		}
+
+		switch msg.Action {
+		case "getDetails":
+			if msg.ContainerID == "" {
+				s.sendWSMessage(conn, "error", map[string]string{"message": "Container ID required"})
+				continue
+			}
+			s.handleGetContainerDetails(conn, msg.ContainerID)
+
+		case "startLogs":
+			if msg.ContainerID == "" {
+				s.sendWSMessage(conn, "error", map[string]string{"message": "Container ID required"})
+				continue
+			}
+			s.handleStartLogsStreaming(conn, msg.ContainerID)
+
+		default:
+			log.Printf("[WS] Unknown action: %s", msg.Action)
+			s.sendWSMessage(conn, "error", map[string]string{"message": "Unknown action: " + msg.Action})
+		}
+	}
+}
+
+// handleGetContainerDetails fetches and sends container details.
+func (s *Server) handleGetContainerDetails(conn *websocket.Conn, containerID string) {
+	log.Printf("[WS] Getting container details for: %s", containerID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	details, err := s.dockerManager.GetContainerDetails(ctx, containerID)
+	if err != nil {
+		log.Printf("[WS] Failed to get container details: %v", err)
+		s.sendWSMessage(conn, "error", map[string]string{"message": err.Error()})
+		return
+	}
+
+	s.sendWSMessage(conn, "containerDetails", details)
+}
+
+// handleStartLogsStreaming starts streaming logs for a container.
+func (s *Server) handleStartLogsStreaming(conn *websocket.Conn, containerID string) {
+	log.Printf("[WS] Starting log streaming for container: %s", containerID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create a channel for log messages
+	logChan := make(chan string, 100)
+	defer close(logChan)
+
+	// Start streaming in a goroutine
+	go func() {
+		opts := docker.LogsOptions{
+			Follow:     true,
+			Tail:       "100",
+			Timestamps: true,
+		}
+		if err := s.dockerManager.StreamLogs(ctx, containerID, opts, logChan); err != nil {
+			if err != context.Canceled {
+				log.Printf("[WS] Log streaming error: %v", err)
+			}
+		}
+	}()
+
+	// Send logs to client
+	for logLine := range logChan {
+		if err := s.sendWSMessage(conn, "logLine", logLine); err != nil {
+			log.Printf("[WS] Failed to send log line: %v", err)
+			return
+		}
+	}
+
+	log.Printf("[WS] Log streaming ended for container: %s", containerID)
+}
+
+// sendWSMessage sends a message over WebSocket.
+func (s *Server) sendWSMessage(conn *websocket.Conn, msgType string, data interface{}) error {
+	msg := AgentMessage{
+		Type:      msgType,
+		Data:      data,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	msgData, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	return conn.WriteMessage(websocket.TextMessage, msgData)
 }

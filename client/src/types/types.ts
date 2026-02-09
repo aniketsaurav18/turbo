@@ -36,7 +36,6 @@ export interface ServerFormData {
  */
 export enum Tab {
   Overview = 'Overview',
-  SSH = 'SSH',
   Performance = 'Performance',
   Docker = 'Docker',
   Commands = 'Commands',
@@ -49,7 +48,6 @@ export enum Tab {
  */
 export const ALL_TABS: Tab[] = [
   Tab.Overview,
-  Tab.SSH,
   Tab.Performance,
   Tab.Docker,
   Tab.Commands,
@@ -216,10 +214,38 @@ export type AgentMessageType =
   | 'docker'
   | 'updates'
   | 'commandResult'
-  | 'error';
+  | 'error'
+  | 'containerDetails'
+  | 'logLine';
 
 export interface AgentMessage {
   type: AgentMessageType;
   data: unknown;
   timestamp: number;
+}
+
+/**
+ * Docker container details for log streaming view
+ */
+export interface DockerContainerDetails {
+  id: string;
+  name: string;
+  image: string;
+  status: string;
+  state: 'running' | 'exited' | 'paused' | 'created';
+  ports: string[];
+  created: string;
+  ipAddress: string;
+  pid: number;
+  labels: Record<string, string>;
+}
+
+/**
+ * Client message types for Docker logs WebSocket
+ */
+export type ClientDockerMessageType = 'getDetails' | 'startLogs';
+
+export interface ClientDockerMessage {
+  action: ClientDockerMessageType;
+  containerId?: string;
 }

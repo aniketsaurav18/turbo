@@ -6,7 +6,6 @@ import type { Server } from '../../types/types.js';
 import { useConnection, useMetrics } from '../../hooks/hooks.js';
 import { formatUptime, formatBytes, formatPercent, progressBar, getPercentColor } from '../../utils/format.js';
 import { getAgentSystemInfo, checkAgentHealth } from '../../utils/agent.js';
-import { executeCommand } from '../../utils/ssh.js';
 import { logger } from '../../utils/logger.js';
 import { Spinner } from '../Spinner.js';
 
@@ -33,7 +32,7 @@ export function OverviewTab({ server }: OverviewTabProps) {
     return (
       <box flexDirection="column" padding={1}>
         <text><span fg="#ff0000">✗ Connection failed: {error}</span></text>
-        <text><span fg="#888888">Check SSH key and network connectivity.</span></text>
+        <text><span fg="#888888">Check agent status and network connectivity.</span></text>
       </box>
     );
   }
@@ -121,8 +120,8 @@ export function OverviewTab({ server }: OverviewTabProps) {
       <box flexDirection="column" marginTop={1}>
         <text><strong><span fg="#00ffff">Connection</span></strong></text>
         <box marginTop={1} flexDirection="row">
-          <box width={12}><text><span fg="#888888">SSH:</span></text></box>
-          <text>{server.username}@{server.host}:{server.port}</text>
+          <box width={12}><text><span fg="#888888">Agent:</span></text></box>
+          <text>{server.host}:{server.agentPort}</text>
         </box>
       </box>
     </box>

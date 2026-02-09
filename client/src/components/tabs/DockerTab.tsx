@@ -1,12 +1,11 @@
 // =============================================================================
-// Docker Tab Component
+// Docker Tab Component with Log Streaming Support
 // =============================================================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useKeyboard } from '@opentui/react';
-import type { Server, DockerContainer, DockerImage } from '../../types/types.js';
+import type { Server, DockerContainer, DockerImage, DockerContainerDetails } from '../../types/types.js';
 import { getAgentDocker, startContainer, stopContainer } from '../../utils/agent.js';
-import { executeCommand } from '../../utils/ssh.js';
 import { formatBytes } from '../../utils/format.js';
 import { logger } from '../../utils/logger.js';
 import { Spinner } from '../Spinner.js';
@@ -15,7 +14,13 @@ interface DockerTabProps {
   server: Server;
 }
 
-type DockerView = 'containers' | 'images';
+type DockerView = 'containers' | 'images' | 'containerDetails';
+
+interface LogEntry {
+  id: string;
+  line: string;
+  timestamp: number;
+}
 
 export function DockerTab({ server }: DockerTabProps) {
   const [loading, setLoading] = useState(true);
@@ -26,76 +31,25 @@ export function DockerTab({ server }: DockerTabProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [view, setView] = useState<DockerView>('containers');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [selectedContainer, setSelectedContainer] = useState<DockerContainer | null>(null);
+  const [containerDetails, setContainerDetails] = useState<DockerContainerDetails | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [wsConnected, setWsConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  const logsRef = useRef<LogEntry[]>([]);
+  const scrollboxRef = useRef<any>(null);
 
   const loadDockerData = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      // Try agent first
       const status = await getAgentDocker(server);
       setContainers(status.containers);
       setImages(status.images);
       setDockerInstalled(status.installed);
-    } catch {
-      // Fallback to SSH
-      try {
-        // Check if docker is installed
-        const checkResult = await executeCommand(server, 'which docker 2>/dev/null');
-        if (checkResult.exitCode !== 0) {
-          setDockerInstalled(false);
-          setLoading(false);
-          return;
-        }
-
-        // Get containers
-        const containersResult = await executeCommand(server, 
-          'docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.State}}"'
-        );
-        
-        if (containersResult.exitCode === 0) {
-          const containerList: DockerContainer[] = containersResult.stdout
-            .split('\n')
-            .filter(Boolean)
-            .map(line => {
-              const [id, name, image, status, state] = line.split('|');
-              return {
-                id: id ?? '',
-                name: name ?? '',
-                image: image ?? '',
-                status: status ?? '',
-                state: (state ?? 'created') as DockerContainer['state'],
-                ports: [],
-                created: '',
-              };
-            });
-          setContainers(containerList);
-        }
-
-        // Get images
-        const imagesResult = await executeCommand(server,
-          'docker images --format "{{.ID}}|{{.Repository}}|{{.Tag}}|{{.Size}}"'
-        );
-        
-        if (imagesResult.exitCode === 0) {
-          const imageList: DockerImage[] = imagesResult.stdout
-            .split('\n')
-            .filter(Boolean)
-            .map(line => {
-              const [id, repo, tag, size] = line.split('|');
-              return {
-                id: id ?? '',
-                repository: repo ?? '',
-                tag: tag ?? '',
-                size: parseInt(size ?? '0', 10) || 0,
-                created: '',
-              };
-            });
-          setImages(imageList);
-        }
-      } catch (sshErr) {
-        setError(sshErr instanceof Error ? sshErr.message : 'Failed to get Docker info');
-      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to get Docker info');
     }
 
     setLoading(false);
@@ -103,14 +57,132 @@ export function DockerTab({ server }: DockerTabProps) {
 
   useEffect(() => {
     loadDockerData();
+    return () => {
+      closeWebSocket();
+    };
   }, [server.id]);
 
-  const currentList = view === 'containers' ? containers : images;
+  const connectWebSocket = useCallback((containerId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      closeWebSocket();
+    }
+
+    const wsUrl = `ws://${server.host}:${server.agentPort}/ws/docker/logs`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      setWsConnected(true);
+      logger.info('Docker logs WebSocket connected', { containerId, server: server.id });
+      
+      ws.send(JSON.stringify({ action: 'getDetails', containerId }));
+      ws.send(JSON.stringify({ action: 'startLogs', containerId }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        
+        switch (message.type) {
+          case 'containerDetails':
+            setContainerDetails(message.data as DockerContainerDetails);
+            break;
+          case 'logLine':
+            const logLine = message.data as string;
+            const newEntry: LogEntry = {
+              id: `${Date.now()}-${Math.random()}`,
+              line: logLine,
+              timestamp: Date.now(),
+            };
+            logsRef.current = [...logsRef.current, newEntry].slice(-500);
+            setLogs(logsRef.current);
+            break;
+          case 'error':
+            logger.error('Docker logs WebSocket error', { error: message.data });
+            break;
+        }
+      } catch (err) {
+        logger.error('Failed to parse WebSocket message', { error: err });
+      }
+    };
+
+    ws.onclose = () => {
+      setWsConnected(false);
+      logger.info('Docker logs WebSocket closed', { containerId });
+    };
+
+    ws.onerror = (error) => {
+      logger.error('Docker logs WebSocket error', { error });
+    };
+
+    wsRef.current = ws;
+  }, [server.host, server.agentPort, server.id]);
+
+  const closeWebSocket = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+      setWsConnected(false);
+    }
+    logsRef.current = [];
+    setLogs([]);
+  }, []);
+
+  const showContainerDetails = useCallback((container: DockerContainer) => {
+    setSelectedContainer(container);
+    setView('containerDetails');
+    setLogs([]);
+    logsRef.current = [];
+    connectWebSocket(container.id);
+  }, [connectWebSocket]);
+
+  const showContainerList = useCallback(() => {
+    closeWebSocket();
+    setSelectedContainer(null);
+    setContainerDetails(null);
+    setView('containers');
+    setSelectedIndex(0);
+  }, [closeWebSocket]);
+
+  const currentList = view === 'images' ? images : containers;
 
   useKeyboard((key) => {
     if (loading || actionLoading) return;
 
-    // Navigation
+    if (view === 'containerDetails') {
+      if (key.name === 'escape' || key.name === 'q') {
+        showContainerList();
+        return;
+      }
+      
+      // Fast scrolling with PageUp/PageDown (10 lines)
+      if (key.name === 'pageup') {
+        if (scrollboxRef.current?.scrollBy) {
+          scrollboxRef.current.scrollBy(-10);
+        }
+        return;
+      }
+      if (key.name === 'pagedown') {
+        if (scrollboxRef.current?.scrollBy) {
+          scrollboxRef.current.scrollBy(10);
+        }
+        return;
+      }
+      
+      // Fast scrolling with Shift+↑/↓ (5 lines)
+      if (key.shift && key.name === 'up') {
+        if (scrollboxRef.current?.scrollBy) {
+          scrollboxRef.current.scrollBy(-5);
+        }
+        return;
+      }
+      if (key.shift && key.name === 'down') {
+        if (scrollboxRef.current?.scrollBy) {
+          scrollboxRef.current.scrollBy(5);
+        }
+        return;
+      }
+    }
+
     if (key.name === 'up') {
       setSelectedIndex(i => Math.max(0, i - 1));
     }
@@ -118,19 +190,20 @@ export function DockerTab({ server }: DockerTabProps) {
       setSelectedIndex(i => Math.min(currentList.length - 1, i + 1));
     }
 
-    // Switch view
-    if (key.name === 'tab' || key.name === 'c') {
-      setView(view === 'containers' ? 'images' : 'containers');
+    if (key.name === 'tab') {
+      setView(v => v === 'containers' ? 'images' : 'containers');
       setSelectedIndex(0);
     }
 
-    // Refresh
     if (key.name === 'r') {
       loadDockerData();
     }
 
-    // Start/Stop container
-    if ((key.name === 's' || key.name === 'return') && view === 'containers' && containers[selectedIndex]) {
+    if (key.name === 'return' && view === 'containers' && containers[selectedIndex]) {
+      showContainerDetails(containers[selectedIndex]!);
+    }
+
+    if (key.name === 's' && view === 'containers' && containers[selectedIndex]) {
       const container = containers[selectedIndex]!;
       handleContainerAction(container);
     }
@@ -142,17 +215,9 @@ export function DockerTab({ server }: DockerTabProps) {
     
     try {
       if (container.state === 'running') {
-        try {
-          await stopContainer(server, container.id);
-        } catch {
-          await executeCommand(server, `docker stop ${container.id}`);
-        }
+        await stopContainer(server, container.id);
       } else {
-        try {
-          await startContainer(server, container.id);
-        } catch {
-          await executeCommand(server, `docker start ${container.id}`);
-        }
+        await startContainer(server, container.id);
       }
       await loadDockerData();
       logger.info('Docker container action completed', { server: server.id, container: container.id, action });
@@ -191,9 +256,81 @@ export function DockerTab({ server }: DockerTabProps) {
     );
   }
 
+  if (view === 'containerDetails' && selectedContainer) {
+    return (
+      <box flexDirection="column" padding={1} flexGrow={1}>
+        <box marginBottom={1} flexDirection="row">
+          <text><span fg="#00ffff">Container: </span></text>
+          <text><strong>{selectedContainer.name}</strong></text>
+          <text><span fg="#888888">  (Esc or q to return)</span></text>
+          {wsConnected && <text><span fg="#00ff00">  ● Live</span></text>}
+        </box>
+
+        {containerDetails && (
+          <box marginBottom={1} flexDirection="row" flexWrap="wrap">
+            <box marginRight={2}>
+              <text><span fg="#888888">Image: </span><span fg="#ffffff">{containerDetails.image}</span></text>
+            </box>
+            <box marginRight={2}>
+              <text><span fg="#888888">State: </span>
+                <span fg={containerDetails.state === 'running' ? '#00ff00' : '#ff0000'}>
+                  {containerDetails.state}
+                </span>
+              </text>
+            </box>
+            <box marginRight={2}>
+              <text><span fg="#888888">IP: </span><span fg="#ffffff">{containerDetails.ipAddress || 'N/A'}</span></text>
+            </box>
+            {containerDetails.ports.length > 0 && (
+              <box marginRight={2}>
+                <text><span fg="#888888">Ports: </span><span fg="#ffffff">{containerDetails.ports.join(', ')}</span></text>
+              </box>
+            )}
+          </box>
+        )}
+
+        <scrollbox 
+          ref={scrollboxRef}
+          flexGrow={1}
+          focused
+          style={{
+            scrollbarOptions: {
+              showArrows: true,
+              trackOptions: {
+                foregroundColor: '#7aa2f7',
+                backgroundColor: '#414868',
+              },
+            },
+          }}
+        >
+          {logs.length === 0 ? (
+            <text><span fg="#666666">Waiting for logs...</span></text>
+          ) : (
+            logs.map((log) => (
+              <box key={log.id}>
+                <text><span fg="#888888">{log.line}</span></text>
+              </box>
+            ))
+          )}
+        </scrollbox>
+
+        <box marginTop={1} flexDirection="row" justifyContent="space-between">
+          <text>
+            <span fg="#888888">
+              ↑↓: Scroll | PgUp/PgDn: Fast | Shift+↑↓: Fast | Esc: Back
+            </span>
+          </text>
+          <text>
+            <span fg="#888888">{logs.length} lines</span>
+            {wsConnected && <span fg="#00ff00"> [Live]</span>}
+          </text>
+        </box>
+      </box>
+    );
+  }
+
   return (
     <box flexDirection="column" padding={1}>
-      {/* Header and View Tabs */}
       <box marginBottom={1}>
         <text>
           {view === 'containers' ? (
@@ -213,13 +350,11 @@ export function DockerTab({ server }: DockerTabProps) {
         <text><span fg="#888888"> (Tab to switch)</span></text>
       </box>
 
-      {/* Content */}
       <box flexDirection="column" flexGrow={1}>
         {currentList.length === 0 ? (
           <text><span fg="#888888">No {view} found.</span></text>
         ) : view === 'containers' ? (
           <>
-            {/* Container Header */}
             <box flexDirection="row">
               <box width={3}><text> </text></box>
               <box width={15}><text><strong><span fg="#888888">NAME</span></strong></text></box>
@@ -257,7 +392,6 @@ export function DockerTab({ server }: DockerTabProps) {
           </>
         ) : (
           <>
-            {/* Image Header */}
             <box flexDirection="row">
               <box width={3}><text> </text></box>
               <box width={25}><text><strong><span fg="#888888">REPOSITORY</span></strong></text></box>
@@ -289,11 +423,10 @@ export function DockerTab({ server }: DockerTabProps) {
         )}
       </box>
 
-      {/* Help */}
       <box marginTop={1}>
         <text>
           <span fg="#888888">
-            ↑↓: Navigate | Tab: Switch view | {view === 'containers' ? 's: Start/Stop | ' : ''}r: Refresh
+            ↑↓: Navigate | Tab: Switch view | Enter: View details/logs | {view === 'containers' ? 's: Start/Stop | ' : ''}r: Refresh
           </span>
         </text>
       </box>

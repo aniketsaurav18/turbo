@@ -72,6 +72,7 @@ func (s *Server) setupRoutes() {
 
 	// WebSocket route
 	s.router.HandleFunc("/ws/metrics", s.handleMetricsWS)
+	s.router.HandleFunc("/ws/docker/logs", s.handleDockerLogsWS)
 }
 
 // Start starts the HTTP server.

@@ -6,7 +6,6 @@ import { useState, useEffect } from 'react';
 import { useKeyboard } from '@opentui/react';
 import type { Server, PackageUpdate } from '../../types/types.js';
 import { getAgentUpdates, applyUpdate, applyAllUpdates } from '../../utils/agent.js';
-import { executeCommand } from '../../utils/ssh.js';
 import { addLogEntry } from '../../db/database.js';
 import { logger } from '../../utils/logger.js';
 import { Spinner } from '../Spinner.js';
@@ -21,20 +20,6 @@ export function UpdatesTab({ server }: UpdatesTabProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [updating, setUpdating] = useState<string | null>(null); // package name being updated
-  const [distro, setDistro] = useState<'apt' | 'yum' | 'unknown'>('unknown');
-
-  const detectDistro = async (): Promise<'apt' | 'yum' | 'unknown'> => {
-    try {
-      const aptResult = await executeCommand(server, 'which apt 2>/dev/null');
-      if (aptResult.exitCode === 0 && aptResult.stdout.trim()) return 'apt';
-      
-      const yumResult = await executeCommand(server, 'which yum 2>/dev/null');
-      if (yumResult.exitCode === 0 && yumResult.stdout.trim()) return 'yum';
-    } catch {
-      // Ignore
-    }
-    return 'unknown';
-  };
 
   const loadUpdates = async () => {
     setLoading(true);
@@ -42,73 +27,12 @@ export function UpdatesTab({ server }: UpdatesTabProps) {
     logger.info('Loading updates', { serverId: server.id });
 
     try {
-      // Try agent first
-      logger.debug('Trying agent for updates', { serverId: server.id });
       const agentUpdates = await getAgentUpdates(server);
       logger.info('Got updates from agent', { serverId: server.id, count: agentUpdates.length });
       setUpdates(agentUpdates);
-    } catch (agentErr) {
-      logger.warn('Agent failed, falling back to SSH', { serverId: server.id, error: agentErr instanceof Error ? agentErr.message : String(agentErr) });
-      // Fallback to SSH
-      try {
-        const detectedDistro = await detectDistro();
-        setDistro(detectedDistro);
-
-        if (detectedDistro === 'apt') {
-          // Refresh package cache
-          await executeCommand(server, 'sudo apt update -qq 2>/dev/null');
-          
-          // List upgradable packages
-          const result = await executeCommand(server, 'apt list --upgradable 2>/dev/null | tail -n +2');
-          
-          if (result.exitCode === 0) {
-            const pkgs: PackageUpdate[] = result.stdout
-              .split('\n')
-              .filter(Boolean)
-              .map(line => {
-                // Format: package/source version [upgradable from: old_version]
-                const match = line.match(/^([^\/]+)\/\S+\s+(\S+).*\[upgradable from: ([^\]]+)\]/);
-                if (match) {
-                  return {
-                    name: match[1]!,
-                    newVersion: match[2]!,
-                    currentVersion: match[3]!,
-                  };
-                }
-                return null;
-              })
-              .filter((p): p is PackageUpdate => p !== null);
-            
-            setUpdates(pkgs);
-          }
-        } else if (detectedDistro === 'yum') {
-          const result = await executeCommand(server, 'yum check-update --quiet 2>/dev/null | grep -v "^$" | head -50');
-          
-          if (result.exitCode === 0 || result.exitCode === 100) { // 100 means updates available
-            const pkgs: PackageUpdate[] = result.stdout
-              .split('\n')
-              .filter(line => line.trim() && !line.startsWith('Obsoleting'))
-              .map(line => {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length >= 2) {
-                  return {
-                    name: parts[0]!.replace(/\.\w+$/, ''), // Remove arch suffix
-                    newVersion: parts[1]!,
-                    currentVersion: 'installed',
-                  };
-                }
-                return null;
-              })
-              .filter((p): p is PackageUpdate => p !== null);
-            
-            setUpdates(pkgs);
-          }
-        } else {
-          setError('Could not detect package manager (apt/yum)');
-        }
-      } catch (sshErr) {
-        setError(sshErr instanceof Error ? sshErr.message : 'Failed to check updates');
-      }
+    } catch (err) {
+      logger.error('Failed to load updates', { serverId: server.id, error: err });
+      setError(err instanceof Error ? err.message : 'Failed to check updates');
     }
 
     setLoading(false);
@@ -148,17 +72,7 @@ export function UpdatesTab({ server }: UpdatesTabProps) {
     setUpdating(packageName);
     
     try {
-      // Try agent first
-      try {
-        await applyUpdate(server, packageName);
-      } catch {
-        // Fallback to SSH
-        const cmd = distro === 'apt' 
-          ? `sudo apt install -y ${packageName}` 
-          : `sudo yum update -y ${packageName}`;
-        await executeCommand(server, cmd);
-      }
-      
+      await applyUpdate(server, packageName);
       addLogEntry(server.id, 'update', `Updated package: ${packageName}`);
       await loadUpdates();
       logger.info('Package updated successfully', { server: server.id, package: packageName });
@@ -174,15 +88,7 @@ export function UpdatesTab({ server }: UpdatesTabProps) {
     setUpdating('all');
     
     try {
-      // Try agent first
-      try {
-        await applyAllUpdates(server);
-      } catch {
-        // Fallback to SSH
-        const cmd = distro === 'apt' ? 'sudo apt upgrade -y' : 'sudo yum update -y';
-        await executeCommand(server, cmd);
-      }
-      
+      await applyAllUpdates(server);
       addLogEntry(server.id, 'update', 'Applied all available updates');
       await loadUpdates();
       logger.info('All updates applied successfully', { server: server.id });
@@ -217,7 +123,6 @@ export function UpdatesTab({ server }: UpdatesTabProps) {
       <box marginBottom={1}>
         <text><strong><span fg="#00ffff">Available Updates</span></strong></text>
         <text><span fg="#888888"> ({updates.length} packages)</span></text>
-        {distro !== 'unknown' && <text><span fg="#888888"> • {distro}</span></text>}
       </box>
 
       {updates.length === 0 ? (

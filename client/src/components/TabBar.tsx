@@ -11,7 +11,6 @@ interface TabBarProps {
 
 const TAB_ICONS: Record<Tab, string> = {
   [Tab.Overview]: '📊',
-  [Tab.SSH]: '🔒',
   [Tab.Performance]: '📈',
   [Tab.Docker]: '🐳',
   [Tab.Commands]: '💻',

@@ -2,8 +2,10 @@
 package docker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -21,6 +23,20 @@ type Container struct {
 	State   string   `json:"state"`
 	Ports   []string `json:"ports"`
 	Created string   `json:"created"`
+}
+
+// ContainerDetails represents detailed container information.
+type ContainerDetails struct {
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Image     string            `json:"image"`
+	Status    string            `json:"status"`
+	State     string            `json:"state"`
+	Ports     []string          `json:"ports"`
+	Created   string            `json:"created"`
+	IPAddress string            `json:"ipAddress"`
+	Pid       int               `json:"pid"`
+	Labels    map[string]string `json:"labels"`
 }
 
 // Image represents a Docker image.
@@ -176,4 +192,104 @@ func (m *Manager) StopContainer(ctx context.Context, containerID string) error {
 // formatPort formats a port binding for display.
 func formatPort(p types.Port) string {
 	return fmt.Sprintf("%d->%d/%s", p.PublicPort, p.PrivatePort, p.Type)
+}
+
+// GetContainerDetails returns detailed information about a specific container.
+func (m *Manager) GetContainerDetails(ctx context.Context, containerID string) (*ContainerDetails, error) {
+	c, err := m.client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	var ports []string
+	for _, p := range c.NetworkSettings.Ports {
+		for _, binding := range p {
+			if binding.HostPort != "" {
+				ports = append(ports, fmt.Sprintf("%s:%s->%s/%s", binding.HostIP, binding.HostPort, p[0].HostPort, "tcp"))
+			}
+		}
+	}
+
+	name := c.Name
+	if len(name) > 0 && name[0] == '/' {
+		name = name[1:]
+	}
+
+	ipAddress := ""
+	if c.NetworkSettings != nil && c.NetworkSettings.IPAddress != "" {
+		ipAddress = c.NetworkSettings.IPAddress
+	}
+
+	return &ContainerDetails{
+		ID:        c.ID[:12],
+		Name:      name,
+		Image:     c.Config.Image,
+		Status:    c.State.Status,
+		State:     c.State.Status,
+		Ports:     ports,
+		Created:   c.Created,
+		IPAddress: ipAddress,
+		Pid:       c.State.Pid,
+		Labels:    c.Config.Labels,
+	}, nil
+}
+
+// LogsOptions contains options for streaming container logs.
+type LogsOptions struct {
+	Follow     bool
+	Tail       string
+	Timestamps bool
+}
+
+// StreamLogs streams container logs to the provided channel.
+// The channel is closed when streaming is complete or an error occurs.
+func (m *Manager) StreamLogs(ctx context.Context, containerID string, opts LogsOptions, logChan chan<- string) error {
+	options := types.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     opts.Follow,
+		Tail:       opts.Tail,
+		Timestamps: opts.Timestamps,
+	}
+
+	reader, err := m.client.ContainerLogs(ctx, containerID, options)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case logChan <- scanner.Text():
+		}
+	}
+
+	return scanner.Err()
+}
+
+// GetContainerLogs returns recent container logs as a single string.
+func (m *Manager) GetContainerLogs(ctx context.Context, containerID string, tail string) (string, error) {
+	options := types.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     false,
+		Tail:       tail,
+		Timestamps: true,
+	}
+
+	reader, err := m.client.ContainerLogs(ctx, containerID, options)
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+
+	logs, err := io.ReadAll(reader)
+	if err != nil {
+		return "", err
+	}
+
+	return string(logs), nil
 }

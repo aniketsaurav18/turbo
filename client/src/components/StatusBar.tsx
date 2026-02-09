@@ -28,9 +28,6 @@ export function StatusBar({ view, server, activeTab }: StatusBarProps) {
 
   return (
     <box 
-      border 
-      borderStyle="single" 
-      borderColor="#888888" 
       paddingLeft={1}
       paddingRight={1}
       justifyContent="space-between"

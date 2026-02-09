@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { useKeyboard } from '@opentui/react';
 import type { Server, CommandResult } from '../../types/types.js';
-import { executeCommand } from '../../utils/ssh.js';
+import { executeViaAgent } from '../../utils/agent.js';
 import { Spinner } from '../Spinner.js';
 
 interface CommandsTabProps {
@@ -59,7 +59,7 @@ export function CommandsTab({ server }: CommandsTabProps) {
     setIsExecuting(true);
 
     try {
-      const result = await executeCommand(server, cmd);
+      const result = await executeViaAgent(server, cmd);
       setHistory(prev => [...prev.slice(-30), {
         command: cmd,
         result,
